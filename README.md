@@ -9,7 +9,7 @@ to refine the invariants using counterexamples until validated.
 
 You can build DistInv from source using the installation guide ```install.txt```. Native installation gives the most accurate runtime numbers.
 
-Alternatively, one can use the [docker image](https://drive.google.com/file/d/1ogBU9KvZsvSRhXerY9Bv-MuiW9oOezBU/view?usp=sharing). This image also includes I4 and FOL-IC3, the two systems DistInv compared with in the evaluation.
+Alternatively, one can use our [docker image](https://drive.google.com/file/d/1ogBU9KvZsvSRhXerY9Bv-MuiW9oOezBU/view?usp=sharing). This image also includes I4 and FOL-IC3, the two systems DistInv compared with in the evaluation.
 
 ## Usage
 
@@ -21,7 +21,7 @@ Given the name of a distributed protocol, ```python main.py PROTOCOL``` simulate
 python main.py two_phase_commit
 ```
 
-#### Low-level API
+#### Step-by-step instructions
 
 In ```src-py/```, we can use ```python translate.py PROTOCOL``` to generate the simulation script in Python from the Ivy source.
 It accepts a conditional argument ```--min_size``` for the minimum instance size (i.e., initial template size). If omitted, DistInv will infer the minimum size from the protocol.
@@ -48,6 +48,10 @@ The proved protocol with correct inductive invariants attached is written to ```
 #### Running new protocols
 
 To use DistInv on a new distributed protocol, simply add the Ivy file at ```protocols/NEW_PROTOCOL/NEW_PROTOCOL.ivy```, and make an empty directory ```outputs/NEW_PROTOCOL/```. Then run ```python main.py NEW_PROTOCOL``` 
+
+#### Reproduce Figure 6
+
+Run ```python tradeoff_figure.py```. The output figure is saved at ```tradeoff.png```
 
 ## Structure
 
