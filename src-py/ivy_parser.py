@@ -1,0 +1,187 @@
+# an Ivy expression parser, takes a string and outputs a tree
+
+
+import re
+
+
+class TreeNode:
+    def __init__(self, parent_node):
+        self.node_type = None
+        self.substr = ''
+        self.metadata = None
+        self.parent = parent_node
+        self.children = []
+
+
+def strip_parenthesis(in_str):
+    # count leading '('
+    curr_str = in_str.strip()
+    while True:
+        if curr_str[0] == '(':
+            if curr_str[-1] != ')':
+                return curr_str
+            count = 1
+            for i in range(1, len(curr_str)):
+                if curr_str[i] == '(':
+                    count += 1
+                elif curr_str[i] == ')':
+                    count -= 1
+                if count == 0:
+                    if i == len(curr_str) - 1:
+                        curr_str = curr_str[1: -1].strip()
+                    else:
+                        return curr_str
+        else:
+            return curr_str
+
+
+def find_closing_parenthesis(target_str, start_idx):
+    assert(target_str[start_idx] == '(')
+    count = 1
+    for idx in range(start_idx+1, len(target_str)):
+        if target_str[idx] == '(':
+            count += 1
+        elif target_str[idx] == ')':
+            count -= 1
+        if count == 0:
+            return idx
+    print('Parenthesis mismatch on string {}'.format(target_str))
+    assert(False)
+
+
+def split_string_with_parenthesis_by_delimeter(in_str, delimeter):
+    parts = in_str.split(delimeter)
+    lp_net_total = 0
+    buffered_parts = []
+    output_parts = []
+    for part in parts:
+        buffered_parts.append(part)
+        lp_net = part.count('(') - part.count(')')
+        lp_net_total += lp_net
+        if lp_net_total == 0:
+            output_parts.append(delimeter.join(buffered_parts))
+            buffered_parts.clear()
+    assert lp_net_total == 0
+    return output_parts
+
+
+def parse_comma_params_and_add_children(this_node, params_str):
+    output_parts = split_string_with_parenthesis_by_delimeter(params_str, ',')
+    for param_str in output_parts:
+        this_node.children.append(tree_parse_ivy_expr(param_str.strip(), this_node))
+
+
+def tree_parse_ivy_expr(ivy_expr, parent_node):
+    ivy_expr = strip_parenthesis(ivy_expr).strip()
+    this_node = TreeNode(parent_node)
+    this_node.substr = ivy_expr
+    if ivy_expr.startswith('forall') or ivy_expr.startswith('exists'):
+        this_node.node_type = ivy_expr[:6]
+        dot_splitted = ivy_expr[len('forall')+1:].split('.', 1)
+        assert(len(dot_splitted) == 2)
+        qvars_str, formula = dot_splitted
+        qvars = qvars_str.split(',')
+        qvars = [qvar.strip() for qvar in qvars]
+        this_node.metadata = qvars
+        this_node.children = [tree_parse_ivy_expr(formula.strip(), this_node)]
+        return this_node
+    # now the top-level is bound to be a logical formula
+    imply_splitted = split_string_with_parenthesis_by_delimeter(ivy_expr, '->')
+    if len(imply_splitted) >= 2:
+        assert(len(imply_splitted) == 2)
+        this_node.node_type = 'imply'
+        for segment in imply_splitted:
+            this_node.children.append(tree_parse_ivy_expr(segment.strip(), this_node))
+        return this_node
+    or_splitted = split_string_with_parenthesis_by_delimeter(ivy_expr, '|')
+    if len(or_splitted) >= 2:
+        this_node.node_type = 'or'
+        for segment in or_splitted:
+            this_node.children.append(tree_parse_ivy_expr(segment.strip(), this_node))
+        return this_node
+    and_splitted = split_string_with_parenthesis_by_delimeter(ivy_expr, '&')
+    if len(and_splitted) >= 2:
+        this_node.node_type = 'and'
+        for segment in and_splitted:
+            this_node.children.append(tree_parse_ivy_expr(segment.strip(), this_node))
+        return this_node
+    nequal_splitted = split_string_with_parenthesis_by_delimeter(ivy_expr, '~=')
+    if len(nequal_splitted) >= 2:
+        assert (len(nequal_splitted) == 2)
+        this_node.node_type = 'nequal'
+        for segment in nequal_splitted:
+            this_node.children.append(tree_parse_ivy_expr(segment.strip(), this_node))
+        return this_node
+    equal_splitted = split_string_with_parenthesis_by_delimeter(ivy_expr, '=')
+    if len(equal_splitted) >= 2:
+        assert(len(equal_splitted) == 2)
+        this_node.node_type = 'equal'
+        for segment in equal_splitted:
+            this_node.children.append(tree_parse_ivy_expr(segment.strip(), this_node))
+        return this_node
+    if 'A' <= ivy_expr[0] <= 'Z':
+        # quantified variable, e.g., ID1
+        assert(re.match('[A-Z][a-zA-Z0-9_]*$', ivy_expr) is not None)
+        this_node.node_type = 'qvar'
+        return this_node
+    if 'a' <= ivy_expr[0] <= 'z':
+        if re.match('^[a-z][a-z0-9_]*$', ivy_expr) is not None:
+            # individual (constant), e.g., zero
+            this_node.node_type = 'const'
+            return this_node
+        else:
+            # starts with a relation
+            match = re.match('^[a-z][a-z0-9_]*\(', ivy_expr)
+            if match is not None:
+                right_parenthesis_idx = find_closing_parenthesis(ivy_expr, match.end() - 1)
+                if right_parenthesis_idx == len(ivy_expr) - 1:
+                    # predicate, e.g., holds_lock(E1, N1)
+                    this_node.node_type = 'predicate'
+                    this_node.metadata = match.group(0)[:-1]
+                    parse_comma_params_and_add_children(this_node, ivy_expr[match.end(): -1].strip())
+                    return this_node
+            match = re.search('^([a-z]+)\.([a-z]+)\(', ivy_expr)
+            if match is not None:
+                right_parenthesis_idx = find_closing_parenthesis(ivy_expr, match.end() - 1)
+                if right_parenthesis_idx == len(ivy_expr) - 1:
+                    # module predicate, e.g., ring.btw(N1,N2,N3)
+                    this_node.node_type = 'module_predicate'
+                    this_node.metadata = (match.group(1), match.group(2))
+                    parse_comma_params_and_add_children(this_node, ivy_expr[match.end(): -1].strip())
+                    return this_node
+    if ivy_expr.startswith('~'):
+        this_node.node_type = 'not'
+        this_node.children = [tree_parse_ivy_expr(ivy_expr[1:], this_node)]
+        return this_node
+    print('Ivy expr {} cannot be parsed'.format(ivy_expr))
+    assert False
+
+
+def all_nodes_of_tree(root):
+    if len(root.children) == 0:
+        return [root]
+    node_list = [root]
+    for child in root.children:
+        node_list.extend(all_nodes_of_tree(child))
+    return node_list
+
+
+node_order = {'const':0, 'qvar':1, 'nequal':2, 'equal':3, 'predicate':4, 'module_predicate':5, 'not':6, 'and':7, 'or':8, 'forall':9, 'exists':10}
+
+
+def standardize_tree(root):
+    num_children = len(root.children)
+    if root.node_type in ['and', 'or']:
+        for i in range(0, num_children - 1):
+            for j in range(0, num_children - i - 1):
+                if node_order[root.children[j].node_type] > node_order[root.children[j + 1].node_type]:
+                    root.children[j], root.children[j + 1] = root.children[j + 1], root.children[j]
+    for child in root.children:
+        standardize_tree(child)
+    return root
+
+
+# for debugging this Ivy expr tree parser
+if __name__ == '__main__':
+    root = tree_parse_ivy_expr('le(X, src(P)) & hello(N1) -> gg(P)', None)
+    print('Completed')

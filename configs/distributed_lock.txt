@@ -1,0 +1,4 @@
+total-order: E1, E2
+same-type: N1, N2
+max-literal: 3
+safety-property: locked(E, N1) & locked(E, N2) -> N1 = N2

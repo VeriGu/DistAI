@@ -1,0 +1,57 @@
+#lang ivy1.7
+
+type node
+type lock
+
+relation lock_msg(N: node, L: lock)
+relation grant_msg(N: node, L: lock)
+relation unlock_msg(N: node, L: lock)
+relation holds_lock(N: node, L: lock)
+relation server_holds_lock(L: lock)
+
+after init {
+    lock_msg(N, L) := false;
+    grant_msg(N, L) := false;
+    unlock_msg(N, L) := false;
+    holds_lock(N, L) := false;
+    server_holds_lock(L) := true;
+}
+
+action send_lock(n: node, l: lock) = {
+    lock_msg(n, l) := true;
+}
+
+action recv_lock(n: node, l: lock) = {
+    require lock_msg(n, l);
+    require server_holds_lock(l);
+    server_holds_lock(l) := false;
+    lock_msg(n, l) := false;
+    grant_msg(n, l) := true;
+}
+
+action recv_grant(n: node, l: lock) = {
+    require grant_msg(n, l);
+    grant_msg(n, l) := false;
+    holds_lock(n, l) := true;
+}
+
+action unlock(n: node, l: lock) = {
+    require holds_lock(n, l);
+    holds_lock(n, l) := false;
+    unlock_msg(n, l) := true;
+}
+
+action recv_unlock(n: node, l: lock) = {
+    require unlock_msg(n, l);
+    unlock_msg(n, l) := false;
+    server_holds_lock(l) := true;
+}
+
+export send_lock
+export recv_lock
+export recv_grant
+export unlock
+export recv_unlock
+
+# safety property
+invariant [1000000] holds_lock(N1, L) & holds_lock(N2, L) -> N1 = N2

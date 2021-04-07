@@ -1,0 +1,116 @@
+#lang ivy1.7
+
+type quorum
+type node
+type value
+
+relation member(N:node, Q:quorum)
+axiom forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)
+
+relation vote_request_msg(N1:node, N2:node)
+relation voted(N:node)
+relation vote_msg(N1:node, N2:node)
+relation votes(N1:node, N2:node)
+relation leader(N:node, Q:quorum)
+relation voting_quorum(Q:quorum)
+relation decided(N:node, Q:quorum, V:value)
+
+after init {
+    vote_request_msg(N1, N2) := false;
+    voted(N) := false;
+    vote_msg(N1, N2) := false;
+    votes(N1, N2) := false;
+    leader(N, Q) := false;
+    decided(N, Q, V) := false;
+    voting_quorum(Q) := false;
+}
+
+action send_request_vote(src: node, dst: node) = {
+	vote_request_msg(N1, N2) := vote_request_msg(N1, N2) | (N1=src & N2=dst);
+}
+
+action send_vote(src: node, dst: node) = {
+    require ~voted(src) & vote_request_msg(dst, src);
+    vote_msg(N1, N2) := vote_msg(N1, N2) | (N1 = src & N2 = dst);
+    voted(N) := voted(N) | N=src;
+}
+
+action recv_vote(n: node, sender: node) = {
+    require vote_msg(sender, n);
+    votes(N1, N2) := votes(N1, N2) | (N1 = n & N2 = sender);
+}
+
+action choose_voting_quorum(q: quorum, sn: node) = {
+    require forall N. member(N, q) -> votes(sn, N);
+    voting_quorum(Q) := Q = q;
+}
+
+action become_leader(n: node, q: quorum) = {
+    require voting_quorum(q) & (member(N, q) -> votes(n, N));
+    leader(N, Q) := leader(N, Q) | (N = n & Q = q);
+}
+
+action decide(n: node, q: quorum, v: value) = {
+    require leader(n, q) & ~decided(n, Q, V);
+    decided(N, Q, V) := decided(N, Q, V) | (N=n & Q=q & V=v);
+}
+
+export send_request_vote
+export send_vote
+export recv_vote
+export choose_voting_quorum
+export become_leader
+export decide
+
+# safety property
+invariant [1000000] decided(N1, Q1, V1) & decided(N2, Q2, V2) -> V1 = V2
+invariant [1000] votes(N1,N1) | ~member(N1,Q1) | ~decided(N1,Q1,V1)
+invariant [1001] vote_msg(N1,N1) | ~member(N1,Q1) | ~leader(N1,Q1)
+invariant [1002] voted(N1) | ~member(N1,Q1) | ~decided(N1,Q1,V1)
+invariant [1003] votes(N1,N1) | ~member(N1,Q1) | ~leader(N1,Q1)
+invariant [1004] voted(N1) | ~member(N1,Q1) | ~voting_quorum(Q1)
+invariant [1005] voted(N1) | ~member(N1,Q1) | ~leader(N1,Q1)
+invariant [1006] vote_request_msg(N1,N1) | ~member(N1,Q1) | ~leader(N1,Q1)
+invariant [1007] vote_request_msg(N1,N1) | ~votes(N1,N1)
+invariant [1008] voted(N1) | ~votes(N1,N1)
+invariant [1009] vote_msg(N1,N1) | ~member(N1,Q1) | ~decided(N1,Q1,V1)
+invariant [1010] voted(N1) | ~vote_msg(N1,N1)
+invariant [1011] vote_msg(N1,N1) | ~votes(N1,N1)
+invariant [1012] vote_request_msg(N1,N1) | ~member(N1,Q1) | ~decided(N1,Q1,V1)
+invariant [1013] vote_request_msg(N1,N1) | ~vote_msg(N1,N1)
+invariant [1014] leader(N1,Q1) | ~decided(N1,Q1,V1)
+invariant [2000] N1 ~= N2 -> ~member(N1,Q1) | ~votes(N1,N1) | ~decided(N2,Q1,V1)
+invariant [2001] N1 ~= N2 -> ~member(N1,Q1) | ~vote_msg(N1,N1) | ~leader(N2,Q1)
+invariant [2002] N1 ~= N2 -> ~member(N1,Q1) | ~votes(N2,N1) | ~leader(N1,Q1)
+invariant [2003] N1 ~= N2 -> votes(N1,N2) | ~member(N2,Q1) | ~leader(N1,Q1)
+invariant [2004] N1 ~= N2 -> vote_msg(N1,N2) | ~member(N1,Q1) | ~leader(N2,Q1)
+invariant [2005] N1 ~= N2 -> votes(N1,N2) | ~member(N2,Q1) | ~decided(N1,Q1,V1)
+invariant [2006] N1 ~= N2 -> voted(N1) | ~member(N1,Q1) | ~decided(N2,Q1,V1)
+invariant [2007] N1 ~= N2 -> voted(N1) | ~member(N1,Q1) | ~leader(N2,Q1)
+invariant [2008] N1 ~= N2 -> vote_msg(N1,N2) | ~member(N1,Q1) | ~decided(N2,Q1,V1)
+invariant [2009] N1 ~= N2 -> vote_msg(N1,N2) | ~votes(N2,N1)
+invariant [2010] N1 ~= N2 -> ~vote_msg(N1,N1) | ~votes(N2,N1)
+invariant [2011] N1 ~= N2 -> ~vote_msg(N1,N1) | ~vote_msg(N1,N2)
+invariant [2012] N1 ~= N2 -> ~leader(N1,Q1) | ~decided(N2,Q1,V1)
+invariant [2013] N1 ~= N2 -> ~member(N1,Q1) | ~vote_msg(N1,N2) | ~leader(N1,Q1)
+invariant [2014] N1 ~= N2 -> ~member(N1,Q1) | ~votes(N1,N1) | ~leader(N2,Q1)
+invariant [2015] N1 ~= N2 -> ~member(N1,Q1) | ~vote_msg(N1,N2) | ~decided(N1,Q1,V1)
+invariant [2016] N1 ~= N2 -> voted(N1) | ~vote_msg(N1,N2)
+invariant [2017] N1 ~= N2 -> ~votes(N1,N1) | ~votes(N2,N1)
+invariant [2018] N1 ~= N2 -> vote_request_msg(N1,N2) | ~vote_msg(N2,N1)
+invariant [2019] N1 ~= N2 -> vote_request_msg(N1,N2) | ~votes(N1,N2)
+invariant [2020] N1 ~= N2 -> ~vote_msg(N1,N2) | ~votes(N1,N1)
+invariant [2021] N1 ~= N2 -> ~member(N1,Q1) | ~vote_msg(N1,N1) | ~decided(N2,Q1,V1)
+invariant [2022] N1 ~= N2 -> ~leader(N1,Q1) | ~leader(N2,Q1)
+invariant [2023] N1 ~= N2 -> ~decided(N1,Q1,V1) | ~decided(N2,Q1,V1)
+invariant [2024] N1 ~= N2 -> ~member(N1,Q1) | ~votes(N2,N1) | ~decided(N1,Q1,V1)
+invariant [2025] N1 ~= N2 -> vote_request_msg(N1,N2) | ~member(N2,Q1) | ~leader(N1,Q1)
+invariant [2026] N1 ~= N2 -> voted(N1) | ~votes(N2,N1)
+invariant [2027] N1 ~= N2 -> vote_request_msg(N1,N2) | ~member(N2,Q1) | ~decided(N1,Q1,V1)
+invariant [3000] N1 ~= N2 & N1 ~= N3 & N2 ~= N3 -> ~member(N1,Q1) | ~votes(N2,N1) | ~leader(N3,Q1)
+invariant [3001] N1 ~= N2 & N1 ~= N3 & N2 ~= N3 -> ~votes(N1,N2) | ~votes(N3,N2)
+invariant [3002] N1 ~= N2 & N1 ~= N3 & N2 ~= N3 -> ~vote_msg(N1,N2) | ~votes(N3,N1)
+invariant [3003] N1 ~= N2 & N1 ~= N3 & N2 ~= N3 -> ~member(N1,Q1) | ~votes(N2,N1) | ~decided(N3,Q1,V1)
+invariant [3004] N1 ~= N2 & N1 ~= N3 & N2 ~= N3 -> ~member(N1,Q1) | ~vote_msg(N1,N2) | ~leader(N3,Q1)
+invariant [3005] N1 ~= N2 & N1 ~= N3 & N2 ~= N3 -> ~member(N1,Q1) | ~vote_msg(N1,N2) | ~decided(N3,Q1,V1)
+invariant [3006] N1 ~= N2 & N1 ~= N3 & N2 ~= N3 -> ~vote_msg(N1,N2) | ~vote_msg(N1,N3)

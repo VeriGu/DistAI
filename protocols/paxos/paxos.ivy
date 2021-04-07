@@ -1,0 +1,158 @@
+#lang ivy1.7
+
+# from https://cs.stanford.edu/~padon/paxos-made-epr.html
+# we upgraded to ivy 1.7 from 1.6
+
+################################################################################
+#
+# Modules that should probably come from a standard library
+#
+################################################################################
+
+################################################################################
+#
+# Module for axiomatizing a total order
+#
+################################################################################
+
+module total_order(r) = {
+    axiom r(X,X)                        # Reflexivity
+    axiom r(X, Y) & r(Y, Z) -> r(X, Z)  # Transitivity
+    axiom r(X, Y) & r(Y, X) -> X = Y    # Anti-symmetry
+    axiom r(X, Y) | r(Y, X)             # Totality
+}
+
+
+################################################################################
+#
+# Types, relations and functions describing state of the network
+#
+################################################################################
+
+type node
+type value
+type quorum
+type round
+
+individual none: round
+relation le(X:round, Y:round)
+instantiate total_order(le)
+
+relation member(N:node, Q:quorum)
+axiom forall Q1, Q2. exists N. member(N, Q1) & member(N, Q2)
+
+relation one_a(R:round)
+relation one_b_max_vote(N:node, R1:round, R2:round, V:value)
+relation one_b(N:node, R:round) # := exists RMAX, V. one_b_max_vote(N,R,RMAX,V)
+relation left_rnd(N:node, R:round) # := exists R2, RMAX, V. ~le(R2,R) & one_b_max_vote(N,R,RMAX,V)
+relation proposal(R:round, V:value) # 2a
+relation vote(N:node, R:round, V:value) # 2b
+relation decision(N:node, R:round, V:value) # got 2b from a quorum
+
+after init {
+    one_a(R) := false;
+    one_b_max_vote(N,R1,R2,V) := false;
+    one_b(N,R) := false;
+    left_rnd(N,R) := false;
+    proposal(R,V) := false;
+    vote(N,R,V) := false;
+    decision(N,R,V) := false;
+}
+
+action send_a (r: round)= {
+    # a proposer selects a round and sends a message asking nodes to join the round
+    require r ~= none;
+    one_a(r) := true;
+}
+
+
+action join_round_case1 (n: node, r: round, maxr:round, v:value) = {
+    # receive 1a and answer with 1b
+    require r ~= none;
+    require one_a(r);
+    require ~left_rnd(n,r);
+
+    # find the maximal vote in a round less than r
+    require maxr = none;
+    require forall MAXR,V. ~(~le(r,MAXR) & vote(n,MAXR,V));
+
+    # send the 1b message
+    one_b_max_vote(n,r,maxr,v) := true;
+    one_b(n,r) := true;
+    left_rnd(n,R) := left_rnd(n,R) | ~le(r,R);
+}
+
+
+action join_round_case2 (n: node, r: round, maxr:round, v:value) = {
+    # receive 1a and answer with 1b
+    require r ~= none;
+    require one_a(r);
+    require ~left_rnd(n,r);
+
+    # find the maximal vote in a round less than r
+    require maxr ~= none;
+    require ~le(r,maxr);
+    require vote(n,maxr,v);
+    require forall MAXR,V. (~le(r,MAXR) & vote(n,MAXR,V)) -> le(MAXR,maxr);
+
+    # send the 1b message
+    one_b_max_vote(n,r,maxr,v) := true;
+    one_b(n,r) := true;
+    left_rnd(n,R) := left_rnd(n,R) | ~le(r,R);
+}
+
+
+
+action propose_case1 (r:round, q:quorum, maxr:round, v:value) = {
+    # receive a quorum of 1b's and send a 2a (proposal)
+    require r ~= none;
+    require ~proposal(r,V);
+    require forall N. member(N, q) -> one_b(N,r);
+
+    # find the maximal max_vote in the quorum
+    require maxr = none;
+    require forall N,MAXR,V. ~(member(N, q) & ~le(r,MAXR) & vote(N,MAXR,V));
+    # propose value v
+    proposal(r, v) := true;
+}
+
+
+action propose_case2 (r:round, q:quorum, maxr:round, v:value) = {
+    # receive a quorum of 1b's and send a 2a (proposal)
+    require r ~= none;
+    require ~proposal(r,V);
+    require forall N. member(N, q) -> one_b(N,r);
+
+    # find the maximal max_vote in the quorum
+    require maxr ~= none;
+    require exists N. member(N, q) & ~le(r,maxr) & vote(N,maxr,v);
+    require forall N,MAXR,V. (member(N, q) & ~le(r,MAXR) & vote(N,MAXR,V)) -> le(MAXR,maxr);
+    # propose value v
+    proposal(r, v) := true;
+}
+
+action cast_vote (n:node, v:value, r:round) = {
+    # receive a 2a and send 2b
+    require r ~= none;
+    require ~left_rnd(n,r);
+    require proposal(r, v);
+    vote(n, r, v) := true;
+}
+
+action decide (n:node, r:round, v:value, q:quorum) = {
+    # get 2b from a quorum
+    require r ~= none;
+    require member(N, q) -> vote(N, r, v);
+    decision(n, r, v) := true;
+}
+
+export send_a
+export join_round_case1
+export join_round_case2
+export propose_case1
+export propose_case2
+export cast_vote
+export decide
+
+# safety property:
+invariant [1000000] (decision(N1,R1,V1) & decision(N2,R2,V2)) -> V1 = V2

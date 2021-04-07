@@ -1,0 +1,3 @@
+same-type: N1, N2, N3, N4
+max-literal: 3
+safety-property: X ~= Y -> ~(has_lock(X) & has_lock(Y))

@@ -1,0 +1,5 @@
+total-order: I1, I2, I3
+one-to-one-f: idn
+one-to-one: N1, I1; N2, I2; N3, I3
+max-literal: 3
+safety-property: forall X: node, Y:node. leader(X) & leader(Y) -> X = Y

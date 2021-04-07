@@ -1,0 +1,6 @@
+total-order: TI1, TI2
+same-type: N1, N2
+max-literal: 3
+safety-property: honest(N1) & honest(N2) -> (block_confirmed(N1,B,T) & block_confirmed(N2,B,T)) | (~block_confirmed(N1,B,T) & ~block_confirmed(N2,B,T))
+safety-property: honest(N1) & honest(N2) -> (transaction_confirmed(TR,N1) & transaction_confirmed(TR,N2)) | (~transaction_confirmed(TR,N1) & ~transaction_confirmed(TR,N2))
+safety-property: honest(N) & leader(N,T2) & transaction_time(TR,T1) & le(T1,T2) & broadcasted(N) & honest(N1) -> transaction_confirmed(TR,N1)

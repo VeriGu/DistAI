@@ -1,0 +1,32 @@
+#lang ivy1.7
+
+# Source: https://github.com/sat-group/cfg-enum/blob/permissive/benchmarks/simple-de-lock.ivy
+
+type node
+
+relation message(Src: node, Dst: node)
+relation has_lock(N: node)
+
+individual start_node: node
+
+after init {
+	message(Src, Dst) := false;
+	has_lock(X) := X = start_node;
+}
+
+action send(src: node, dst: node) = {
+    require has_lock(src);
+    message(src, dst) := true;
+    has_lock(src) := false;
+}
+
+action recv(src: node, dst: node) = {
+    require message(src, dst);
+    message(src, dst) := false;
+    has_lock(dst) := true;
+}
+
+export send
+export recv
+
+invariant [1000000] X ~= Y -> ~(has_lock(X) & has_lock(Y))

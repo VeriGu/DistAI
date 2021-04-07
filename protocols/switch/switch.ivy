@@ -1,0 +1,64 @@
+#lang ivy1.7
+
+type packet
+type node
+
+relation pending(P:packet, S:node, T:node)  # relation for pending packets
+function src(P:packet) : node  # function src : packet -> node
+function dst(P:packet) : node  # function dst : packet -> node
+relation link(S:node, T:node) # relation for network topology
+
+relation route_dom(N: node, X: node)
+relation route_tc(N: node, X: node, Y: node)
+#instantiate route(N:node) : acyclic_partial_function(node) # routing tables
+
+axiom ~link(X, X)                          # no self-loops in links
+axiom ~link(X, Y) | link(Y, X)             # symmetric links
+
+# The initial state of the network (empty)
+after init {
+    route_dom(N, X) := false;
+    route_tc(N, X, Y) := X = Y;
+    pending(P, S, T) := false;
+}
+
+action new_packet(p: packet) = {
+    # Create a new packet, by adding it to pending from the src to itself
+    pending(p, src(p), src(p)) := true;
+}
+
+action flood(p: packet, sw0: node, sw1: node, sw2: node) = {
+    require pending(p, sw0, sw1);
+    require ~route_dom(dst(p), sw1);
+    if (~route_dom(src(p), sw1) & src(p) ~= sw1) {
+        route_dom(src(p), sw1) := true;
+        route_tc(src(p), X, Y) := route_tc(src(p), X, Y) | (route_tc(src(p), X, sw1) & route_tc(src(p), sw0, Y));
+    };
+    if dst(p) ~= sw1 {
+        pending(p, sw1, Y) := link(sw1, Y) & Y ~= sw0;
+    };
+}
+
+action route(p: packet, sw0: node, sw1: node, sw2: node) = {
+    require pending(p, sw0, sw1);
+    require route_dom(dst(p), sw1);
+    require route_tc(dst(p), sw1, sw2) & sw1 ~= sw2 & ((route_tc(dst(p), sw1, Z) & sw1 ~= Z) -> route_tc(dst(p), sw2, Z));
+    if (~route_dom(src(p), sw1) & src(p) ~= sw1) {
+        route_dom(src(p), sw1) := true;
+        route_tc(src(p), X, Y) := route_tc(src(p), X, Y) | (route_tc(src(p), X, sw1) & route_tc(src(p), sw0, Y));
+    };
+    if dst(p) ~= sw1 {
+        pending(p, sw1, sw2) := true;
+    };
+}
+
+export new_packet
+export flood
+export route
+
+# The safety property is given by the invariants of the
+# acyclic_partial_function module, that state that the routing tables
+# do not create cycles.
+
+invariant [1000000] route_tc(N, X, X) & (route_tc(N, X, Y) & route_tc(N, Y, Z) -> route_tc(N, X, Z)) & (route_tc(N, X, Y) & route_tc(N, Y, X) -> X = Y) & (route_tc(N, X, Y) & route_tc(N, X, Z) -> (route_tc(N, Y, Z) | route_tc(N, Z, Y)))
+

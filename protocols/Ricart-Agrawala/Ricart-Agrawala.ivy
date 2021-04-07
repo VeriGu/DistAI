@@ -1,0 +1,48 @@
+#lang ivy1.7
+
+type node
+
+relation requested(N1: node, N2:node)
+relation replied(N1:node, N2:node)
+relation holds(N:node)
+
+after init {
+    requested(N1, N2) := false;
+    replied(N1, N2) := false;
+    holds(N) := false;
+}
+
+action request(requester: node, responder: node) = {
+    require ~requested(requester, responder);
+    require requester ~= responder;
+    requested(requester, responder) := true;
+}
+
+action reply(requester: node, responder: node) = {
+    require ~replied(requester, responder);
+    require ~holds(responder);
+    require ~replied(responder, requester);
+    require requested(requester, responder);
+    require requester ~= responder;
+    requested(requester, responder) := false;
+    replied(requester, responder) := true;
+}
+
+action enter(requester: node) = {
+    require N ~= requester -> replied(requester, N);
+    holds(requester) := true;
+}
+
+action leave(requester: node) = {
+    require holds(requester);
+    holds(requester) := false;
+    replied(requester, N) := false;
+}
+
+export request
+export reply
+export enter
+export leave
+
+# safety property
+invariant [1000000] holds(N1) & holds(N2) -> N1 = N2

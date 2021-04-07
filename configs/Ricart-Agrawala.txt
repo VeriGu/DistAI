@@ -1,0 +1,3 @@
+same-type: N1, N2
+max-literal: 3
+safety-property: holds(N1) & holds(N2) -> N1 = N2

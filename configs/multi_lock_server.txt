@@ -1,0 +1,3 @@
+same-type: N1, N2
+max-literal: 3
+safety-property: holds_lock(N1, L) & holds_lock(N2, L) -> N1 = N2

@@ -1,0 +1,2 @@
+max-literal: 3
+safety-property: link(C1, S) & link(C2, S) -> C1 = C2

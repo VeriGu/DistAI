@@ -1,0 +1,6 @@
+total-order: T1, T2
+same-type: N1, N2; O1, O2
+max-literal: 3
+hard: true
+safety-property: ~(TX1 ~= TX2 & commit_tx(TX1) & commit_tx(TX2)  & le(TX1,TX2) & write_tx(TX1, K) & depends_tx(TX2, K, T3) & ~le(TX1, T3))
+safety-property: (commit_tx(T) & op_in_tx(T, O) & op_node(O, N)) -> precommit_tx(T, N)

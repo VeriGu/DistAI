@@ -1,0 +1,5 @@
+same-type: N1, N2
+max-literal: 3
+safety-property: decide_commit(N0) -> ~decide_abort(N1)
+safety-property: decide_commit(N0) -> vote_yes(N1)
+safety-property: decide_abort(N0) -> abort_flag

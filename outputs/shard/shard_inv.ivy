@@ -1,0 +1,56 @@
+#lang ivy1.7
+
+type key
+type value
+type node
+
+relation table(N:node, K:key, V:value)
+relation owner(N:node, K:key)
+relation transfer_msg(N:node, K:key, V:value)
+
+after init {
+    table(N, K, V) := false;
+    transfer_msg(N, K, V) := false;
+    require owner(N1, K) & owner(N2, K) -> N1 = N2;
+}
+
+action reshard(k: key, v: value, n_old: node, n_new: node) = {
+    require table(n_old, k, v);
+    table(n_old, k, v) := false;
+    owner(n_old, k) := false;
+    transfer_msg(n_new, k, v) := true;
+}
+
+action recv_transfer_msg(n: node, k: key, v: value) = {
+    require transfer_msg(n, k, v);
+    transfer_msg(n, k, v) := false;
+    table(n, k, v) := true;
+    owner(n, k) := true;
+}
+
+action put(n: node, k: key, v: value) = {
+    require owner(n, k);
+    table(n, k, V) := V = v;
+}
+
+export reshard
+export recv_transfer_msg
+export put
+
+# safety property
+invariant [1000000] table(N1, K, V1) & table(N2, K, V2) -> N1 = N2 & V1 = V2
+invariant [1000] owner(N1,K1) | ~table(N1,K1,V1)
+invariant [1001] ~owner(N1,K1) | ~transfer_msg(N1,K1,V1)
+invariant [1002] ~table(N1,K1,V1) | ~transfer_msg(N1,K1,V1)
+invariant [2000] N1 ~= N2 -> ~table(N1,K1,V1) | ~transfer_msg(N2,K1,V1)
+invariant [2001] N1 ~= N2 -> ~transfer_msg(N1,K1,V1) | ~transfer_msg(N2,K1,V1)
+invariant [2002] N1 ~= N2 -> ~owner(N1,K1) | ~transfer_msg(N2,K1,V1)
+invariant [2003] N1 ~= N2 -> ~table(N1,K1,V1) | ~table(N2,K1,V1)
+invariant [2004] N1 ~= N2 -> ~owner(N1,K1) | ~owner(N2,K1)
+invariant [2005] N1 ~= N2 -> ~table(N1,K1,V1) | ~owner(N2,K1)
+invariant [3000] V1 ~= V2 -> ~table(N1,K1,V1) | ~table(N1,K1,V2)
+invariant [3001] V1 ~= V2 -> ~transfer_msg(N1,K1,V1) | ~transfer_msg(N1,K1,V2)
+invariant [3002] V1 ~= V2 -> ~table(N1,K1,V1) | ~transfer_msg(N1,K1,V2)
+invariant [4000] V1 ~= V2 & N1 ~= N2 -> ~transfer_msg(N1,K1,V1) | ~transfer_msg(N2,K1,V2)
+invariant [4001] V1 ~= V2 & N1 ~= N2 -> ~table(N1,K1,V1) | ~table(N2,K1,V2)
+invariant [4002] V1 ~= V2 & N1 ~= N2 -> ~table(N1,K1,V1) | ~transfer_msg(N2,K1,V2)

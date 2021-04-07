@@ -1,0 +1,3 @@
+same-type: N1, N2, N3
+max-literal: 3
+safety-property: ~error(N)

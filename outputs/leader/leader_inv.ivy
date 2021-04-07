@@ -1,0 +1,125 @@
+#lang ivy1.7
+
+################################################################################
+#
+# A module for axiomatizing a total order
+#
+################################################################################
+
+module total_order(r) = {
+    axiom r(X,X)                        # Reflexivity
+    axiom r(X, Y) & r(Y, Z) -> r(X, Z)  # Transitivity
+    axiom r(X, Y) & r(Y, X) -> X = Y    # Anti-symmetry
+    axiom r(X, Y) | r(Y, X)             # Totality
+}
+
+
+################################################################################
+#
+# Module describing a ring topology.
+#
+# The module includes an anti-reflexive ternary btw relation.
+#
+# The module also includes get_next and get_prev actions.
+#
+# In this module, the ring topology is arbitrary and fixed.
+#
+################################################################################
+
+module ring_topology(carrier) = {
+
+    relation btw(X:carrier,Y:carrier, Z:carrier) # Y is on the acyclic path from X to Z
+
+    # Axiom defining the btw relation - note it's not reflexive
+    # not needed: axiom btw(X,Y,Z) -> X ~= Y & X ~= Z & Y ~= Z  # anti-reflexive
+    axiom btw(W,X,Y) & btw(W,Y,Z) -> btw(W,X,Z)  # transitive
+    axiom btw(W,X,Y) -> ~btw(W,Y,X)  # acyclic
+    axiom btw(W,X,Y) | btw(W,Y,X) | W=X | W=Y | X=Y  # total
+    axiom btw(X,Y,Z) -> btw(Y,Z,X)  # cyclic permutations
+
+}
+
+
+################################################################################
+#
+# Types, relations and functions describing state of the network
+#
+################################################################################
+
+type node
+type id
+
+# A ring topology of nodes
+instantiate ring : ring_topology(node)
+
+# A total order on ids
+relation le(X:id, Y:id)
+instantiate total_order(le)
+
+# A function relating a node to its id
+function idn(X:node) : id
+axiom idn(X) = idn(Y) -> X = Y  # the idn function is injective
+
+# A relation that keeps track of nodes that think they are the leader
+relation leader(N:node)
+
+# A relation for pending messages, a message is just an id
+relation pending(V:id, N:node) # The identity V is pending at node N
+
+################################################################################
+#
+# Protocol description
+#
+# Two action: send and receive
+#
+################################################################################
+
+after init {
+    leader(N) := false;
+    pending(V,N) := false;
+}
+
+action send(n: node, n1: node) = {
+    # send my own id to the next node
+    require n ~= n1 & ((Z ~= n & Z ~= n1) -> ring.btw(n, n1, Z));
+    pending(idn(n), n1) := true;
+}
+
+action become_leader(n: node) = {
+    require pending(idn(n), n);
+    leader(n) := true;
+}
+
+action receive(n: node, m: id, n1: node) = {
+    require pending(m, n);
+    require n ~= n1 & ((Z ~= n & Z ~= n1) -> ring.btw(n, n1, Z));
+#    require m ~= idn(n);
+    if le(idn(n), m) {
+        pending(m, n1) := true;
+    };
+}
+
+
+export send
+export receive
+export become_leader
+
+# The safety property:
+invariant [1000000] forall X: node, Y:node. leader(X) & leader(Y) -> X = Y  # at most one leader
+invariant [1000] idn(N1)=I1 -> pending(I1,N1) | ~leader(N1)
+invariant [2000] idn(N1)=I1 & idn(N2)=I2 & le(I1, I2) & I1 ~= I2 -> pending(I2,N1) | ~pending(I2,N2)
+invariant [2001] idn(N1)=I1 & idn(N2)=I2 & le(I1, I2) & I1 ~= I2 -> ~leader(N1)
+invariant [2002] idn(N1)=I1 & idn(N2)=I2 & le(I1, I2) & I1 ~= I2 -> pending(I2,N1) | ~leader(N2)
+invariant [2003] idn(N1)=I1 & idn(N2)=I2 & le(I1, I2) & I1 ~= I2 -> ~pending(I1,N1)
+invariant [3000] idn(N1)=I1 & idn(N2)=I2 & idn(N3)=I3 & le(I1, I2) & I1 ~= I2 & le(I2, I3) & I2 ~= I3 -> pending(I3,N2) | ~pending(I2,N1) | ~pending(I3,N1)
+invariant [3001] idn(N1)=I1 & idn(N2)=I2 & idn(N3)=I3 & le(I1, I2) & I1 ~= I2 & le(I2, I3) & I2 ~= I3 -> pending(I3,N2) | ~pending(I1,N3) | ~pending(I3,N1)
+invariant [3002] idn(N1)=I1 & idn(N2)=I2 & idn(N3)=I3 & le(I1, I2) & I1 ~= I2 & le(I2, I3) & I2 ~= I3 -> pending(I3,N2) | ring.btw(N1,N2,N3) | ~pending(I3,N1)
+invariant [3003] idn(N1)=I1 & idn(N2)=I2 & idn(N3)=I3 & le(I1, I2) & I1 ~= I2 & le(I2, I3) & I2 ~= I3 -> pending(I3,N1) | ~pending(I1,N2) | ~pending(I3,N2)
+invariant [3004] idn(N1)=I1 & idn(N2)=I2 & idn(N3)=I3 & le(I1, I2) & I1 ~= I2 & le(I2, I3) & I2 ~= I3 -> pending(I2,N1) | ~pending(I1,N3) | ~pending(I2,N3)
+invariant [3005] idn(N1)=I1 & idn(N2)=I2 & idn(N3)=I3 & le(I1, I2) & I1 ~= I2 & le(I2, I3) & I2 ~= I3 -> pending(I3,N1) | ~pending(I3,N2) | ~ring.btw(N1,N2,N3)
+invariant [3006] idn(N1)=I1 & idn(N2)=I2 & idn(N3)=I3 & le(I1, I2) & I1 ~= I2 & le(I2, I3) & I2 ~= I3 -> ~pending(I1,N2) | ~pending(I1,N3)
+invariant [3007] idn(N1)=I1 & idn(N2)=I2 & idn(N3)=I3 & le(I1, I2) & I1 ~= I2 & le(I2, I3) & I2 ~= I3 -> ~pending(I2,N1) | ~ring.btw(N1,N2,N3)
+invariant [3008] idn(N1)=I1 & idn(N2)=I2 & idn(N3)=I3 & le(I1, I2) & I1 ~= I2 & le(I2, I3) & I2 ~= I3 -> ring.btw(N1,N2,N3) | ~pending(I1,N2)
+invariant [3009] idn(N1)=I1 & idn(N2)=I2 & idn(N3)=I3 & le(I1, I2) & I1 ~= I2 & le(I2, I3) & I2 ~= I3 -> ~pending(I1,N2) | ~pending(I2,N1)
+invariant [3010] idn(N1)=I1 & idn(N2)=I2 & idn(N3)=I3 & le(I1, I2) & I1 ~= I2 & le(I2, I3) & I2 ~= I3 -> ~pending(I1,N3) | ~ring.btw(N1,N2,N3)
+invariant [3011] idn(N1)=I1 & idn(N2)=I2 & idn(N3)=I3 & le(I1, I2) & I1 ~= I2 & le(I2, I3) & I2 ~= I3 -> pending(I2,N1) | ring.btw(N1,N2,N3) | ~pending(I2,N3)

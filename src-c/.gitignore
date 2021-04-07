@@ -1,0 +1,10 @@
+Debug/
+**.sln
+**.vcxproj
+**.vcxproj.**
+.vs/
+*.o
+main
+log.txt
+ivy_check_log.txt
+refiner_log.txt

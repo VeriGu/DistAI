@@ -1,0 +1,4 @@
+total-order: R1, R2
+same-type: N1, N2, N3, N4; Q1, Q2
+max-literal: 3
+safety-property: (decision(N1,R1,V1) & decision(N2,R2,V2)) -> V1 = V2

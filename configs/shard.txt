@@ -1,0 +1,3 @@
+same-type: V1, V2; N1, N2
+max-literal: 3
+safety-property: table(N1, K, V1) & table(N2, K, V2) -> N1 = N2 & V1 = V2
