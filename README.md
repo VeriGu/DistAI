@@ -9,7 +9,7 @@ to refine the invariants using counterexamples until validated.
 
 You can build DistInv from source using the installation guide ```install.txt```. Native installation gives the most accurate runtime numbers.
 
-Alternatively, one can use our [docker image](https://drive.google.com/file/d/1ogBU9KvZsvSRhXerY9Bv-MuiW9oOezBU/view?usp=sharing). This image also includes I4 and FOL-IC3, the two systems DistInv compared with in the evaluation.
+Alternatively, one can use our [docker image](https://drive.google.com/file/d/1ogBU9KvZsvSRhXerY9Bv-MuiW9oOezBU/view?usp=sharing) with the guide ```docker_usage.md```. This image also includes I4 and FOL-IC3, the two systems DistInv compared with in the evaluation.
 
 ## Usage
 
