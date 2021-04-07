@@ -5,13 +5,17 @@ Given a protocol, DistInv first repeatedly simulate the protocol using randomize
 Then DistInv applies an enumeration-based learning procedure to find invariants that hold true on all the samples. Finally, DistInv uses Ivy, a theorem prover built on top of Z3 SMT solver,
 to refine the invariants using counterexamples until validated.
 
-#### Installation
+## Installation
 
-All experiments are directly runnable in this docker environment. If you want the accurate runtime number, see the native installation guide at ```install.txt```
+You can build DistInv from source using the installation guide ```install.txt```. Native installation gives the most accurate runtime numbers.
+
+Alternatively, one can use the [docker image](https://drive.google.com/file/d/1ogBU9KvZsvSRhXerY9Bv-MuiW9oOezBU/view?usp=sharing). This image also includes I4 and FOL-IC3, the two systems DistInv compared with in the evaluation.
+
+## Usage
 
 #### Top-level API
 
-Given the name of a distributed protocol, ```python main.py PROTOCOL``` simulates the protocol, learn the invariants and refine them. 
+Given the name of a distributed protocol, ```python main.py PROTOCOL``` simulates the protocol, learn the invariants and refine them. The proved protocol with correct invariants will be written to ```outputs/PROTOCOL/PROTOCOL_inv.ivy```
 
 ```
 python main.py two_phase_commit
@@ -40,7 +44,12 @@ run ```./main PROTOCOL [MAX_RETRY]``` to learn and infer the invariants. ```MAX_
 The proved protocol with correct inductive invariants attached is written to ```outputs/PROTOCOL/PROTOCOL_inv.ivy```. From there, one can use
 ```ivy_check PROTOCOL_inv.ivy``` to validate its correctness.
 
-#### structure
+
+#### Running new protocols
+
+To use DistInv on a new distributed protocol, simply add the Ivy file at ```protocols/NEW_PROTOCOL/NEW_PROTOCOL.ivy```, and make an empty directory ```outputs/NEW_PROTOCOL/```. Then run ```python main.py NEW_PROTOCOL``` 
+
+## Structure
 
 - protocols/:
   The 14 distributed protocols in Ivy
