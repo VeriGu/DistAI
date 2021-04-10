@@ -48,6 +48,12 @@ We found that the docker container causes a 15-60% runtime slowdown. To get the 
 
 - Enter ```/myI4```  in the docker container
 
+- Enter Python 2 environment by 
+    ```
+    conda activate py2
+    ```
+
+
 - To reproduce the numbers in Table 3, for each protocol, run
     ```
     python myI4.py PROTOCOL -final|-total
@@ -57,6 +63,12 @@ We found that the docker container causes a 15-60% runtime slowdown. To get the 
     ```
     bash ./mytest.sh chord “node=4”
     ```
+  
+- When finished, switch back to Python 3 by
+    ```
+    conda activate base
+    ```
+
 
 
 ### FOL-IC3
