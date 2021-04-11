@@ -77,12 +77,12 @@ We found that the docker container causes a 15-60% runtime slowdown. To get the 
 
 - Run “forall” test for a specific protocol:
     ```
-    python mypyvy/src/mypyvy fol-ic3 --logic=universal pyvs/PROTOCOL.pyv
+    python mypyvy/src/mypyvy.py fol-ic3 --logic=universal pyvs/PROTOCOL.pyv
     ```
   
 - Run default test for a specific protocol:
     ```
-    python mypyvy/src/mypyvy fol-ic3 --logic=fol pyvs/PROTOCOL.pyv
+    python mypyvy/src/mypyvy.py fol-ic3 --logic=fol pyvs/PROTOCOL.pyv
     ```
   
 When running tests, lots of intermediate messages will show on screen, and the time will show when the test finishes.
