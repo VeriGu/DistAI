@@ -18,12 +18,12 @@ if __name__ == '__main__':
         print('Protocol simulation will terminate after collecting {} samples'.format(sample_number))
         print('')
         simulation_start_time = time.time()
-        subprocess.run(['python', 'translate.py', PROBLEM, '--exact_sample={}'.format(sample_number)], cwd='src/')
+        subprocess.run(['python', 'translate.py', PROBLEM, '--exact_sample={}'.format(sample_number)], cwd='src-py/')
         subprocess.run(['python', '{}.py'.format(PROBLEM)], cwd='auto_samplers/')
         simulation_end_time = time.time()
         simulation_time = simulation_end_time - simulation_start_time
-        subprocess.run(['./main', PROBLEM], cwd='DistInv/')
-        with open('DistInv/refiner_log.txt', 'r') as refiner_log_file:
+        subprocess.run(['./main', PROBLEM], cwd='src-c/')
+        with open('src-c/refiner_log.txt', 'r') as refiner_log_file:
             refiner_log_lines = refiner_log_file.readlines()
         for line in refiner_log_lines:
             if line.startswith('Success?'):
