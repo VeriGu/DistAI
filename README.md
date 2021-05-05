@@ -56,7 +56,24 @@ Run ```python tradeoff_figure.py```. The output figure is saved at ```tradeoff.p
 ## Structure
 
 - protocols/:
-  The 14 distributed protocols in Ivy
+  The 14 distributed protocols in Ivy. The mapping between protocol names in the paper and acronyms in this repository is given below.
+  
+  | protocol name           | acronym                    |
+  |-------------------------|----------------------------|
+  | chord ring maintenance  | chord                      |
+  | database replication    | database_chain_replication |
+  | decentralized lock      | decentralized_lock         |
+  | distributed lock        | distributed_lock           |
+  | hashed sharding         | shard                      |
+  | leader election         | leader                     |
+  | learning switch         | switch                     |
+  | lock server             | lock_server                |
+  | multi-lock server       | multi_lock_server          |
+  | Paxos                   | paxos                      |
+  | permissioned blockchain | blockchain                 |
+  | Ricart-Agrawala         | Ricart-Agrawala            |
+  | simple consensus        | consensus                  |
+  | two-phase commit        | two_phase_commit           |
   
 - src-py/:
   The python source codes for protocol simulation
@@ -70,5 +87,5 @@ Run ```python tradeoff_figure.py```. The output figure is saved at ```tradeoff.p
   - basics.h/cpp: define types and data structures (e.g., how an invariant is represented)
   - preprocessing.h/cpp: reads and process the trace file and configuration file
   - Solver.h/cpp: the core of DistInv. Implements template projection, invariant enumeration, and invariant projection
-  - InvRefiner./cpp: interact with Ivy to refine the invariants
+  - InvRefiner.h/cpp: interact with Ivy to refine the invariants using counterexamples
   - Helper.h/cpp: provides functionality for other files
