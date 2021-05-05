@@ -1,7 +1,6 @@
 #include "Solver.h"
 #include "InvRefiner.h"
 
-std::common_type_t<std::chrono::nanoseconds, std::chrono::nanoseconds> hash_time = std::chrono::steady_clock::now() - std::chrono::steady_clock::now();
 
 int main(int argc, char* argv[])
 {
