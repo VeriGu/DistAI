@@ -1,6 +1,6 @@
-# DistInv Installation Guide
+# DistAI Installation Guide
 
-This guide provides instructions for building DistInv from source. 
+This guide provides instructions for building DistAI from source. 
 
 1. Download and install Anaconda from https://www.anaconda.com/products/individual. Use the latest version (Python 3.8).
 
@@ -38,8 +38,8 @@ This guide provides instructions for building DistInv from source.
 
 ## Notes
 
-- We compared DistInv with I4 and FOL-IC3 in the paper. For native installation of I4, see https://github.com/GLaDOS-Michigan/I4. For FOL-IC3, see https://dl.acm.org/do/10.1145/3395650/abs/.
+- We compared DistAI with I4 and FOL-IC3 in the paper. For native installation of I4, see https://github.com/GLaDOS-Michigan/I4. For FOL-IC3, see https://dl.acm.org/do/10.1145/3395650/abs/.
 
-- If you want native installation of DistInv and I4 on the same machine, you should install Ivy as above and skip the Ivy installation step in I4. This ensures that Ivy is recognizable by anaconda.
+- If you want native installation of DistAI and I4 on the same machine, you should install Ivy as above and skip the Ivy installation step in I4. This ensures that Ivy is recognizable by anaconda.
 
 - To get I4 working, besides the instructions provided by the authors, we needed to edit a line in file ``ANACONDA_PATH/envs/py2/bin/ivy_check``. We changed `from ivy.ivy_check import main` to `from ivy_check import main`.

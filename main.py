@@ -47,6 +47,6 @@ if __name__ == '__main__':
         total_time = simulation_time + enumeration_time + refinement_time
         print('Counterexamples:', counterexample_count)
         print('Invariants:', invariant_count)
-        print('DistInv runtime: {:.3f}s'.format(total_time))
+        print('DistAI runtime: {:.3f}s'.format(total_time))
         print('Breakdown:  simulation {:.3f}s  learning {:.3f}s  refinement {:.3f}s'.format(simulation_time, enumeration_time, refinement_time))
 
