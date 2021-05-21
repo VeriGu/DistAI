@@ -1,6 +1,8 @@
 import sys
 import subprocess
 import time
+import os
+import shutil
 
 PROBLEM = 'leader'
 
@@ -13,6 +15,11 @@ if __name__ == '__main__':
     success = False
     counterexample_count, invariant_count = 0, 0
     simulation_time, enumeration_time, refinement_time = 0, 0, 0
+    if not os.path.exists('src-c/runtime'):
+        os.mkdir('src-c/runtime')
+    c_runtime_path = 'src-c/runtime/' + PROBLEM
+    shutil.rmtree(c_runtime_path, ignore_errors=True)
+    os.mkdir(c_runtime_path)
     for i in range(MAX_TEMPLATE_INCREASE):
         if i > 0:
             print('Re-simulate protocol with larger instances')
@@ -25,7 +32,7 @@ if __name__ == '__main__':
             subprocess.run(['./main', PROBLEM], cwd='src-c/')
         else:
             subprocess.run(['./main', PROBLEM, str(i)], cwd='src-c/')
-        with open('src-c/refiner_log.txt', 'r') as refiner_log_file:
+        with open(c_runtime_path + '/refiner_log.txt', 'r') as refiner_log_file:
             refiner_log_lines = refiner_log_file.readlines()
         for line in refiner_log_lines:
             if line.startswith('Success?'):
@@ -34,7 +41,7 @@ if __name__ == '__main__':
             elif line.startswith('Counterexamples:'):
                 counterexample_count += int(line[len('Counterexamples:') + 1:].strip())
             elif line.startswith('Invariants:'):
-                invariant_count += int(line[len('Invariants:') + 1:].strip())
+                invariant_count = int(line[len('Invariants:') + 1:].strip())
             elif line.startswith('Enumeration time:'):
                 enumeration_time += int(line[len('Enumeration time:') + 1:].strip())
             elif line.startswith('Refinement time:'):
@@ -47,6 +54,5 @@ if __name__ == '__main__':
         total_time = simulation_time + enumeration_time + refinement_time
         print('Counterexamples:', counterexample_count)
         print('Invariants:', invariant_count)
-        print('DistAI runtime: {:.3f}s'.format(total_time))
+        print('DistInv runtime: {:.3f}s'.format(total_time))
         print('Breakdown:  simulation {:.3f}s  learning {:.3f}s  refinement {:.3f}s'.format(simulation_time, enumeration_time, refinement_time))
-

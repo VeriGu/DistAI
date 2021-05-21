@@ -45,7 +45,7 @@ invariants = []  # element: a string representing an invariant (safety property)
 axiom_default_relations = []  # element: relation_name involved in axioms handled by default
 python_codes = []  # each element is a line of Python code, will be written to .py file
 tmp_var_counter = [1]  # used to name temp variables
-bottleneck = [0]  # whether sampling is going to be bottleneck of system
+bottleneck, hard = [0], [0]  # whether sampling is going to be bottleneck of system
 vars_each_type = dict()  # key: type_name, value: [var_name_1,...,var_name_k]
 predicate_columns = []  # element: a predicate (e.g., requested[N1, N2])
 safety_relations = set()  # element: relation_name (when filled)
@@ -144,7 +144,7 @@ def get_partial_function_init_lines(relation_name, first_type, second_type, doma
 
 
 def default_axiom_rejection_sampling(axiom_str):
-    bottleneck[0] = 3
+    hard[0] = 1
     lines = []
     lines.append('# the following code block applies rejection sampling to generate predicates that satisfy axiom:')
     lines.append('# ' + axiom_str)
@@ -1324,7 +1324,7 @@ def emit_config_file(config_file):
         one_to_one_pairs = ['{}, {}'.format(var1, var2) for var1, var2 in one_to_one_pairs]
         config_codes.append('one-to-one: {}'.format('; '.join(one_to_one_pairs)))
     config_codes.append('max-literal: {}'.format(MAX_LITIRAL_INIT))
-    if bottleneck[0] == 3:
+    if hard[0] == 1:
         config_codes.append('hard: true')
     for inv_str in invariants:
         config_codes.append('safety-property: {}'.format(inv_str))

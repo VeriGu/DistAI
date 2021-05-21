@@ -8,14 +8,14 @@ void InvRefiner::ivy_check_curr_invs()
 	vector<string> more_invs;
 	if (config.hard) infer_more_invs(more_invs);
 	encode_and_output(original_ivy_file, target_output_file, id_to_inv, more_invs);
-	int retval = system((string(IVY_CHECK_PATH) + " " + target_output_file + " > ivy_check_log.txt").c_str());
+	int retval = system((string(IVY_CHECK_PATH) + " " + target_output_file + " > runtime/" + problem_name + "/ivy_check_log.txt").c_str());
 	(void)retval;
 	ivy_call_count++;
 }
 
 bool InvRefiner::parse_log(set<int>& failed_inv_ids)
 {
-	ifstream in("ivy_check_log.txt");
+	ifstream in("runtime/" + problem_name + "/ivy_check_log.txt");
 	if (!in) {
 		cout << "Cannot open Ivy log file" << endl;
 		exit(-1);
@@ -52,36 +52,73 @@ void InvRefiner::refine_one_countereg(const vars_t& vars, const inv_t& inv)
 {
 	// remove the broken invariant
 	invs_dict[vars].erase(inv);
+	extended_invs_dict[vars].erase(inv);
 	// optionally add new candidate invariants 
 	// if REFINE_EXTEND_DISJUNCTION == REFINE_EXTEND_SECCESSOR == true, the system is theoretically guaranteed to find exist-free invariants
 	// but the runtime can be prohibitively slow
-	if (REFINE_EXTEND_DISJUNCTION)
+	if (refine_extend_disjunction)
 	{
 		// if invariant p \/ !q is invalidated by SMT solver, try p \/ !q \/ r for all r
 		extend_disjunctions(vars, inv);
 	}
-	if (REFINE_EXTEND_SECCESSOR)
+	else
+	{
+		// mark if we possibly overshoot
+		if (!lower_literal_inv_discarded)
+		{
+			if (int(inv.size()) < config.max_literal) lower_literal_inv_discarded = true;
+		}
+	}
+	if (refine_extend_successor)
 	{
 		// if forall X. p(X) is invalidated by SMT solver, try forall X < Y. p(X)
 		extend_successors(vars, inv);
+	}
+	else
+	{
+		// mark if we possibly overshoot
+		if (!lower_subtemplate_inv_discarded)
+		{
+			if (column_indices_dict[vars].size() > 0) lower_subtemplate_inv_discarded = true;
+		}
 	}
 }
 
 void InvRefiner::extend_disjunctions(const vars_t& vars, const inv_t& inv)
 {
-	// This function remains a prototype implementation. Two potential optimizations:
 	// 1) If we can parse the counterexample, either r or !r can be discarded.
-	// 2) Also, if p \/ r is currently an invariant, we do not need to consider p \/ !q \/ r
-	if (int(inv.size()) == config.max_literal) return;
-	int num_predicates_2 = 2 * predicates_dict[vars].size();
+	int inv_literal = int(inv.size());
+	if (inv_literal == config.max_literal) return;
+	const unordered_set<inv_t, VectorHash>& extended_invs = extended_invs_dict[vars];
+	int num_predicates = predicates_dict[vars].size();
+	int num_predicates_2 = 2 * num_predicates;
 	for (int i = 0; i < num_predicates_2; i++)
 	{
-		if (std::find(inv.begin(), inv.end(), i) == inv.end())
+		int not_i = (i + num_predicates) % num_predicates_2;
+		if ((std::find(inv.begin(), inv.end(), i) == inv.end()) && (std::find(inv.begin(), inv.end(), not_i) == inv.end()))
 		{
 			inv_t new_inv = inv;
 			new_inv.push_back(i);
 			std::sort(new_inv.begin(), new_inv.end());
-			invs_dict[vars].insert(new_inv);
+
+			// if p \/ r is currently an invariant, we do not need to consider p \/ !q \/ r
+			bool subcomb_is_inv = false;
+			vector<inv_t> subcombs;
+			calc_combinations(new_inv, inv_literal - 1, subcombs);
+
+			for (const inv_t& subcomb : subcombs)
+			{
+				if (extended_invs.find(subcomb) != extended_invs.end())
+				{
+					subcomb_is_inv = true;
+					break;
+				}
+			}
+
+			if (!subcomb_is_inv)
+			{
+				invs_dict[vars].insert(new_inv);
+			}
 		}
 	}
 }
@@ -90,6 +127,7 @@ void InvRefiner::extend_successors(const vars_t& vars, const inv_t& inv)
 {
 	for (map<vars_t, vector<vector<int>>>::iterator it = column_indices_dict[vars].begin(); it != column_indices_dict[vars].end(); it++)
 	{
+		// cout << "Extending successor" << endl;
 		const vars_t& successor = it->first;
 		const vector<vector<int>>& column_indices_list = it->second;
 		unordered_set<inv_t, VectorHash> new_extended_invs;
@@ -183,44 +221,78 @@ void InvRefiner::infer_more_invs(vector<string>& more_invs)
 	}
 }
 
-bool InvRefiner::auto_refine()
+bool InvRefiner::auto_refine(bool add_disj, bool add_proj)
 {
 	bool success = false;
-	bool safety_property_failed = false;
-	int refinement_round = 0;
-	while ((!success) && (!safety_property_failed))
+	map<vars_t, unordered_set<inv_t, VectorHash>> invs_dict_before_refine = invs_dict;
+	map<vars_t, unordered_set<inv_t, VectorHash>> extended_invs_dict_before_refine = extended_invs_dict;
+	for (int mode = 0; mode < 3; mode++)
 	{
-		refinement_round++;
-		ivy_check_curr_invs();
-		set<int> failed_inv_ids;
-		bool ivy_check_passed = parse_log(failed_inv_ids);
-		cout << "Refinement round " << refinement_round << ": ";
-		if (ivy_check_passed)
+		if (mode == 0)           // only remove broken invariants
 		{
-			cout << "Invariants validated, protocol proved." << endl;
-			success = true;
+			refine_extend_disjunction = false;
+			refine_extend_successor = false;
 		}
-		else
+		else 
 		{
-			if (failed_inv_ids.find(SAFETY_PROPERTY_ID) != failed_inv_ids.end())
+			if (mode == 1)       // enable second step of minimum weakening --- disjunct literals
 			{
-				cout << "Safety property failed." << endl;
-				safety_property_failed = true;
+				if (!add_disj) break;
+				if (!lower_literal_inv_discarded) break;
+				refine_extend_disjunction = true;
+				refine_extend_successor = false;
+				cout << "Enable second step of minimum weakening" << endl;
+			}
+			else if (mode == 2)  // enable third step of minimum weakening --- project to higher subtemplates
+			{
+				if (!add_proj) break;
+				if (!lower_subtemplate_inv_discarded) break;
+				refine_extend_disjunction = true;
+				refine_extend_successor = true;
+				cout << "Enable third step of minimum weakening" << endl;
+			}
+			invs_dict = invs_dict_before_refine;
+			extended_invs_dict = extended_invs_dict_before_refine;
+		}
+		
+		success = false;
+		bool safety_property_failed = false;
+		int refinement_round = 0;
+		while ((!success) && (!safety_property_failed))
+		{
+			refinement_round++;
+			ivy_check_curr_invs();
+			set<int> failed_inv_ids;
+			bool ivy_check_passed = parse_log(failed_inv_ids);
+			cout << "Refinement round " << refinement_round << ": ";
+			if (ivy_check_passed)
+			{
+				cout << "Invariants validated, protocol proved." << endl;
+				success = true;
 			}
 			else
 			{
-				for (int id : failed_inv_ids)
+				if (failed_inv_ids.find(SAFETY_PROPERTY_ID) != failed_inv_ids.end())
 				{
-					// cout << id << endl;
-					assert(id_to_inv.find(id) != id_to_inv.end());
-					vars_t& vars = id_to_inv[id].first;
-					inv_t& inv = id_to_inv[id].second;
-					refine_one_countereg(vars, inv);
-					countereg_count++;
+					cout << "Safety property failed." << endl;
+					safety_property_failed = true;
 				}
-				cout << failed_inv_ids.size() << " invariants not inductive" << endl;
+				else
+				{
+					for (int id : failed_inv_ids)
+					{
+						// cout << id << endl;
+						assert(id_to_inv.find(id) != id_to_inv.end());
+						vars_t& vars = id_to_inv[id].first;
+						inv_t& inv = id_to_inv[id].second;
+						refine_one_countereg(vars, inv);
+						countereg_count++;
+					}
+					cout << failed_inv_ids.size() << " invariants not inductive" << endl;
+				}
 			}
 		}
+		if (success) break;
 	}
 	return success;
 }
@@ -235,15 +307,25 @@ int InvRefiner::get_invariant_count()
 	return id_to_inv.size();
 }
 
-void write_log(bool success, int countereg_count, int invariant_num, int enumeration_time_total, int refinement_time_total)
+bool InvRefiner::get_lower_literal_inv_discarded()
 {
-	ofstream out("refiner_log.txt");
+	return lower_literal_inv_discarded;
+}
+
+bool InvRefiner::get_lower_subtemplate_inv_discarded()
+{
+	return lower_subtemplate_inv_discarded;
+}
+
+void write_log(string problem_name, bool success, int countereg_count, int invariant_num, int enumeration_time_total, int refinement_time_total, bool lower_literal_inv_discarded, bool lower_subtemplate_inv_discarded)
+{
+	ofstream out("runtime/" + problem_name + "/refiner_log.txt");
 	if (!out) {
 		cout << "Cannot create refiner log file" << endl;
 		exit(-1);
 	}
-	string success_str = success ? "Yes": "No";
-	out << "Success? " << success_str << endl;
+
+	out << "Success? " << BOOL_TO_STR(success) << endl;
 	out << "Invariants: " << invariant_num << endl;
 	out << "Counterexamples: " << countereg_count << endl;
 	out << "Enumeration time: " << enumeration_time_total << endl;

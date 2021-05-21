@@ -15,7 +15,7 @@ void InvEncoder::encode_invs_dict(const map<vars_t, unordered_set<inv_t, VectorH
 		vector<string> str_invs_for_this_vars;
 		encode_invs(vars, predicates_dict.at(vars), invs, extended_same_type_groups, str_invs_for_this_vars, id_to_inv, start_idx);
 		str_invs.insert(str_invs.end(), str_invs_for_this_vars.begin(), str_invs_for_this_vars.end());
-		start_idx += 1000;
+		start_idx += 1000 * (1 + str_invs_for_this_vars.size() / 1000);
 	}
 	for (const string& more_inv : more_invs) 
 	{
