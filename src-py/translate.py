@@ -4,7 +4,7 @@
 # so we eventually took an unorthodox approach: parse an Ivy file from scratch and translates it into Python
 # this file does not aim to be a complete compiler, yet is enough to support the 14 protocols evaluated
 
-# usage: python translate.py PROTOCOL_NAME NUM_
+# usage: python translate.py PROTOCOL_NAME [NUM_RETRY]
 
 
 import sys
@@ -15,7 +15,7 @@ from itertools import product, chain
 import getopt
 
 SAFETY_PROPERTY_ID = 1000000
-DEFAULT_MAX_ITER = 50
+DEFAULT_MAX_ITER = 100
 SUBSAMPLE_PER_SAMPLE = 3
 MAX_LITIRAL_INIT = 3
 MAX_SIMULATE_ROUND = 1000
@@ -24,6 +24,7 @@ DEFAULT_AXIOM_MAX_RETRY = 10
 
 
 EXACT_NUM_OF_SAMPLE = [-1]  # only used by draw_tradeoff.py for convenience of terminating after a given number of samples
+SLOW_SAMPLE = [1]  # only used in parallel setting to slow sampling
 
 
 types = dict()  # key: type_name, value: minimum size
@@ -612,7 +613,6 @@ def parse_axiom(axiom_str, from_init_not_axiom=False):
                         if 'qmembership' not in axioms:
                             axioms['qmembership'] = []
                         axioms['qmembership'].append(relation_name)
-                        bottleneck[0] = 1
     if not axiom_recognized:
         if 'default' not in axioms:
             axioms['default'] = []
@@ -677,7 +677,7 @@ def parse_assume_block(tainted_exprs, assume_stmts):
                 tainted_relations[expr_tree_root.metadata].append((i, child.substr))
 
     # one may extend this code block to natively support more types of non-deterministic patterns
-    bottleneck[0] = 2
+    bottleneck[0] = 1
     explicit_handling = False
     templates_found = defaultdict(list)
     lines = []
@@ -1161,9 +1161,12 @@ def get_one_to_one():
 def build_sample_function():
     enumerate_predicates()
     lines = []
-    max_iter_const = DEFAULT_MAX_ITER if bottleneck[0] == 0 else (DEFAULT_MAX_ITER*3//4 if bottleneck[0] == 1 else DEFAULT_MAX_ITER//2)
-    max_simulation_round = MAX_SIMULATE_ROUND if bottleneck[0] == 0 else (MAX_SIMULATE_ROUND * 3 // 4 if bottleneck[0] == 1 else MAX_SIMULATE_ROUND // 2)
-    max_no_progress_simulation_round = MAX_SIMULATE_ROUND_WIHOUT_PROGRESS if bottleneck[0] == 0 else (MAX_SIMULATE_ROUND_WIHOUT_PROGRESS * 3 // 4 if bottleneck[0] == 1 else MAX_SIMULATE_ROUND_WIHOUT_PROGRESS // 2)
+    max_iter_const = DEFAULT_MAX_ITER if bottleneck[0] == 0 else DEFAULT_MAX_ITER//2
+    max_simulation_round = MAX_SIMULATE_ROUND if bottleneck[0] == 0 else MAX_SIMULATE_ROUND // 2
+    max_no_progress_simulation_round = MAX_SIMULATE_ROUND_WIHOUT_PROGRESS if bottleneck[0] == 0 else MAX_SIMULATE_ROUND_WIHOUT_PROGRESS // 2
+    max_iter_const *= SLOW_SAMPLE[0]
+    max_simulation_round *= SLOW_SAMPLE[0]
+    max_no_progress_simulation_round *= SLOW_SAMPLE[0]
     lines.append('def sample(max_iter={}):'.format(max_iter_const))
     indent_prefix = '\t'
     type_numbers = ['{}_num'.format(type_name) for type_name in types]
@@ -1345,7 +1348,7 @@ if __name__ == '__main__':
     PROBLEM = sys.argv[1]
     num_attempt = [0]
 
-    valid_options = ["min_size=", "num_attempt=", "exact_sample="]
+    valid_options = ["min_size=", "num_attempt=", "exact_sample=", "slow_sample="]
     try:
         args = sys.argv
         opts, args = getopt.getopt(args[2:], '', valid_options)
@@ -1366,6 +1369,8 @@ if __name__ == '__main__':
                 num_attempt[0] = int(arg)
             elif opt == '--exact_sample':
                 EXACT_NUM_OF_SAMPLE[0] = int(arg)
+            elif opt == '--slow_sample':
+                SLOW_SAMPLE[0] = int(arg)
 
     except getopt.GetoptError:
         print('Invalid command-line argument')

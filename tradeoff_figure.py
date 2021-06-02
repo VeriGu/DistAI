@@ -4,12 +4,15 @@ import time
 import os
 import shutil
 import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.rcParams['pdf.fonttype'] = 42
+matplotlib.rcParams['ps.fonttype'] = 42
 
 def run_tradeoff():
     PROBLEM = 'consensus'
 
     # sample_number_list = [2000, 4000]
-    sample_number_list = [1000, 2000, 4000, 6000, 8000, 10000, 12000, 14000, 16000, 18000, 20000, 22000]
+    sample_number_list = [100, 2000, 6000, 10000, 14000, 18000, 22000, 26000, 30000, 34000, 38000, 42000, 46000, 50000]
     simulation_time_list = []
     enumeration_time_list = []
     refinement_time_list = []
@@ -77,18 +80,47 @@ if __name__ == '__main__':
     simulation_time_list = [float(s) for s in simulation_time_list]
     enumeration_time_list = [float(s) for s in enumeration_time_list]
     refinement_time_list = [float(s) for s in refinement_time_list]
-    sample_number_list = [1000, 2000, 4000, 6000, 8000, 10000, 12000, 14000, 16000, 18000, 20000, 22000]
+    sample_number_list = [100, 2000, 6000, 10000, 14000, 18000, 22000, 26000, 30000, 34000, 38000, 42000, 46000, 50000]
 
-    fig, ax = plt.subplots(nrows=1, ncols=1)
+    fig, (ax, ax2) = plt.subplots(nrows=2, ncols=1, gridspec_kw={'height_ratios': [1, 3]})
+    plt.subplots_adjust(hspace=0)
     ax.plot(sample_number_list, simulation_time_list, '-o', markersize=8)
     ax.plot(sample_number_list, enumeration_time_list, '-x', markersize=9, mew=2.5)
     ax.plot(sample_number_list, refinement_time_list, '-^', markersize=8)
-    plt.tick_params(labelsize=16)
-    plt.xticks(sample_number_list, ('', '2K', '', '6K', '', '10K', '', '14K', '', '18K', '', '22K'))
+    ax2.plot(sample_number_list, simulation_time_list, '-o', markersize=8)
+    ax2.plot(sample_number_list, enumeration_time_list, '-x', markersize=9, mew=2.5)
+    ax2.plot(sample_number_list, refinement_time_list, '-^', markersize=8)
+    ax.set_ylim(58, 65)  # outliers only
+    ax2.set_ylim(-2, 20)  # most of the data
+    ax2.set_ylim(ymin=0)
+    ax.set_xlim(xmin=0)
+    ax2.set_xlim(xmin=0)
+    ax2.spines['top'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+    ax.xaxis.tick_top()
+    ax.tick_params(labeltop='off')  # don't put tick labels at the top
+    ax2.xaxis.tick_bottom()
+    d = .015  # how big to make the diagonal lines in axes coordinates
+    # arguments to pass to plot, just so we don't keep repeating them
+    kwargs = dict(transform=ax.transAxes, color='k', clip_on=False)
+    ax.plot((-d, +d), (-d, +d), **kwargs)  # top-left diagonal
+    ax.plot((1 - d, 1 + d), (-d, +d), **kwargs)  # top-right diagonal
+
+    kwargs.update(transform=ax2.transAxes)  # switch to the bottom axes
+    ax2.plot((-d, +d), (1 - d, 1 + d), **kwargs)  # bottom-left diagonal
+    ax2.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)  # bottom-right diagonal
+    fig.subplots_adjust(hspace=.2)
+    ax.tick_params(labelsize=16)
+    ax.set_xticks([])
+    ax2.tick_params(labelsize=16)
+    plt.xticks(sample_number_list, ('', '2K', '', '10K', '', '18K', '', '26K', '', '34K', '', '42K', '', '50K'))
     plt.xlabel('number of samples', fontsize=18)
+    fig.add_subplot(111, frame_on=False)
+    plt.tick_params(labelcolor="none", bottom=False, left=False)
     plt.ylabel('runtime (s)', fontsize=18)
-    plt.yscale('log')
-    plt.legend(['sampling', 'enumeration', 'refinement'], loc='upper right',
+    # plt.yscale('log')
+    # plt.xlim(xmin=0)
+    ax.legend(['sampling', 'enumeration', 'refinement'], loc='upper right',
                fontsize=14)  # , handlelength=12.25, markerscale=10.125)
     plt.tight_layout()
     fig.savefig('tradeoff.pdf')
