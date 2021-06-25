@@ -60,6 +60,7 @@ Run ```python tradeoff_figure.py```. The output figure is saved at ```tradeoff.p
   
   | protocol name           | acronym                    |
   |-------------------------|----------------------------|
+  | async lock server       | multi_lock_server          |  
   | chord ring maintenance  | chord                      |
   | database replication    | database_chain_replication |
   | decentralized lock      | decentralized_lock         |
@@ -68,7 +69,6 @@ Run ```python tradeoff_figure.py```. The output figure is saved at ```tradeoff.p
   | leader election         | leader                     |
   | learning switch         | switch                     |
   | lock server             | lock_server                |
-  | multi-lock server       | multi_lock_server          |
   | Paxos                   | paxos                      |
   | permissioned blockchain | blockchain                 |
   | Ricart-Agrawala         | Ricart-Agrawala            |
