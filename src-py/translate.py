@@ -1210,7 +1210,7 @@ def build_sample_function():
     if EXACT_NUM_OF_SAMPLE[0] > 0:
         lines.append('{}exact_sample_number += 1'.format(indent_prefix))
     lines.append('')
-    lines.append('{}# generate subsamples from the current state (sample)'.format(indent_prefix))
+    lines.append('{}# generate all subsamples from the current state (sample)'.format(indent_prefix))
     lines.append('{}for k in range({}):'.format(indent_prefix, SUBSAMPLE_PER_SAMPLE))
     indent_prefix += '\t'
     one_to_one_f, one_to_one_in_type, one_to_one_out_type = get_one_to_one()
@@ -1344,6 +1344,11 @@ def translate_ivy_to_python(PROBLEM):
     print('Instrumenting finished. Simulation script written to auto_samplers/{}.py'.format(PROBLEM))
 
 
+def setup_directory(PROBLEM):
+    from pathlib import Path
+    Path("../src-c/runtime/{}".format(PROBLEM)).mkdir(parents=True, exist_ok=True)
+
+
 if __name__ == '__main__':
     PROBLEM = sys.argv[1]
     num_attempt = [0]
@@ -1378,3 +1383,4 @@ if __name__ == '__main__':
 
 
     translate_ivy_to_python(PROBLEM)
+    setup_directory(PROBLEM)
