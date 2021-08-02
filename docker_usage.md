@@ -15,12 +15,12 @@
   
 - Run docker container
     ```
-    docker run -it distinv /bin/bash
+    docker run -it distai /bin/bash
     ```
     
 - Test basic functionality: in the docker container, run
     ```
-    cd /dist-inv
+    cd /DistAI
     python main.py Ricart-Agrawala
     ```
 
@@ -28,9 +28,9 @@
 
 ## Table 3 & 4
 
-### Dist-inv
+### DistAI
 
-- Enter ```/dist-inv```  in the docker container
+- Enter ```/DistAI```  in the docker container
 
 - For each protocol, run 
     ```
@@ -42,7 +42,7 @@ The script will print the counterexample number and invariant number.
 For the number of domains, variables, and maximum literal, one can directly inspect the output file. 
 The script also prints the runtime breakdown among simulation/learning/refinement.
 
-We found that the docker container causes a 15-60% runtime slowdown. To get the most accurate runtime numbers, consider the native installation guide in ```/dist-inv/install.txt```
+We found that the docker container causes a 15-60% runtime slowdown. To get the most accurate runtime numbers, consider the native installation guide in ```/DistAI/install.txt```
 
 ### I4
 
@@ -94,7 +94,7 @@ For some protocols, we also provide the version with automaton hints. Tests can 
 
 ## Figure 6
 
-In ```DistInv/```, run 
+In ```DistAI/```, run 
 ```
 python tradeoff_figure.py
 ```

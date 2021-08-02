@@ -49,6 +49,8 @@ The proved protocol with correct inductive invariants attached is written to ```
 
 To use DistAI on a new distributed protocol, simply add the Ivy file at ```protocols/NEW_PROTOCOL/NEW_PROTOCOL.ivy```, and make an empty directory ```outputs/NEW_PROTOCOL/```. Then run ```python main.py NEW_PROTOCOL``` 
 
+Note that to simulate the protocol, DistAI parses the Ivy file from scratch instead of using the Ivy compiler. The parser/translator does not support full grammar of Ivy 1.7. We are working to extend it. If you have questions please let us know.
+
 #### Reproduce Figure 6
 
 Run ```python tradeoff_figure.py```. The output figure is saved at ```tradeoff.png```
