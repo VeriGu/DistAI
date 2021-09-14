@@ -67,10 +67,10 @@ action byzantine_broadcast(n:node, b:block, t:time) = {
     block_confirmed(N,B,t) := *;
     broadcasted(n) := true;
     broadcastable(n,b,t) := false;
+    transaction_confirmed(TR,N) := transaction_confirmed(TR,N) | (transaction_in_block(TR,b)) if honest(n) else transaction_confirmed(TR,N);
     assume honest(N) -> ~(B1 ~= B2 & block_confirmed(N,B1,t) & block_confirmed(N,B2,t));
     assume honest(N1) & honest(N2) -> (block_confirmed(N1,b,t) & block_confirmed(N2,b,t)) | (~block_confirmed(N1,B,t) & ~block_confirmed(N2,B,t));
     assume honest(n) & honest(N) -> block_confirmed(N,b,t);
-    transaction_confirmed(TR,N) := transaction_confirmed(TR,N) | (transaction_in_block(TR,b)) if honest(n) else transaction_confirmed(TR,N);
 }
 
 action sabotage(n:node) = {

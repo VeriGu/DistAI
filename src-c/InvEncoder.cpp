@@ -114,6 +114,7 @@ void InvEncoder::append_invs_ivy(const string& infile, const string& outfile, co
 	ifstream source(infile, std::ios::binary);
 	ofstream dest(outfile, std::ios::binary);
 	dest << source.rdbuf();
+	dest << endl;
 	for (const string& str_inv : str_invs)
 	{
 		dest << str_inv << endl;

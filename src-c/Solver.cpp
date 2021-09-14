@@ -164,6 +164,21 @@ void Solver::get_vars_traversal_order()
 	}
 }
 
+/*
+	given old_predicates and old_data_mat, remove quantified variable var_to_remove from group curr_group_remaining
+	store the new predicates and data matrix to new_predicates and new_data_mat
+
+	old_predicates:		p(N1)	p(N2)	q(N1,S1)	q(N2,S1)
+	old_data_mat:		1		0		0			1			0		1		1			0
+						0		1		0			0			1		0		1			1
+	var_to_remove:			"N2"
+	curr_group_remaining:	["N1", "N2"]
+	new_predicates:		p(N1)	q(N1,S1)
+	new_data_mat:		1		0			0		1
+						0		1			1		0
+						0		0			1		1
+						1		0			0		1
+*/
 void Solver::reduce_table(vector<string>& old_predicates, DataMatrix& old_data_mat, vector<string>& new_predicates, DataMatrix& new_data_mat, const vector<string>& curr_group_remaining, const string var_to_remove)
 {
 	assert(int(2 * old_predicates.size()) == old_data_mat.ncol);
@@ -373,16 +388,64 @@ void Solver::permute_inv(const inv_t& inv, const vars_t& vars, unordered_set<inv
 
 void Solver::auto_solve()
 {
-	get_subtables_by_varnum(init_data_mat);
-	get_column_indices_dict();
-	get_vars_traversal_order();
+	/*
+		template: forall N1 N2 (this needs to be manually specified)
+		subtemplate 1: forall N1 
+		subtemplate 2: forall N1 != N2
 
+		Suppose one csv file has three concrete nodes n1,n2,n3
+		Then for subtemplate 1, there are three mappings from quantified variables to concrete nodes
+		N1->n1, N1->n2, N1->n3
+
+		Suppose the csv file has 12 columns 
+		hold(n1)	hold(n2)	hold(n3)	link(n1,n1)	link(n1,n2)	link(n1,n3)	link(n2,n1)	link(n2,n2)	link(n2,n3)	link(n3,n1)	link(n3,n2)	link(n3,n3)	
+		1           0           1           1			1			0			0			1			0			0			0			1			
+	    ...
+		
+		Under subtemplate 1, there should be only two predicates, because there is only one quantified variable that can appear in the invariant
+		hold(N1)	link(N1,N1)
+		1			1			(from mapping N1->n1)
+		0			1			(from mapping N1->n2)
+		1			1			(from mapping N1->n3)
+		...
+
+		This transformation is done by function get_subtables_by_varnum. The results are stored in predicates_dict and data_mat_dict
+	*/
+	
+	get_subtables_by_varnum(init_data_mat);
+
+	/*
+		If we know "forall N1. holds(N1) \/ ~link(N1,N1)" is an invariant, when we move on to the higher subtemplate "forall N1 != N2",
+			we should not consider 1) holds(N1) \/ ~link(N1,N1), 2) holds(N2) \/ ~link(N2,N2).
+		To achieve this, we must establish some relationship between one subtemplate's predicates and another's
+		This information is setup by function get_column_indices_dict, and stored in column_indices_dict
+
+		There are 4 columns under subtemplate 1 "forall N1"
+			hold(N1)	link(N1,N1)		~hold(N1)	~link(N1,N1)
+
+		There are 12 columns under subtemplate 2 "forall N1 != N2"
+			hold(N1)	hold(N2)	link(N1,N1)		link(N1,N2)		link(N2,N1)		link(N2,N2)		~hold(N1)	~hold(N2)	~link(N1,N1)	~link(N1,N2)	~link(N2,N1)	~link(N2,N2)
+
+		There are two mappings from subtemplate 1 to subtemplate 2: 1) N1->N1, 2) N1->N2. So
+			column_indices_dict[ ["N1"] ][ ["N1","N2"] ] = [ [0, 2, 6, 8], [1, 5, 7, 11] ]
+
+		The invariant "holds(N1) \/ ~link(N1,N1)" is enumerated and validated under subtemplate 1. It is represented by [0,3]
+		Then under subtemplate 2, we should not consider [0,8] and [1,11], the 0th and 3rd elements in [0, 2, 6, 8] and [1, 5, 7, 11], respectively
+	*/
+
+	get_column_indices_dict();
+
+	// store a valid traversal order of the subtemplates in vars_traversal_order (see Figure 4 in the paper)
+	get_vars_traversal_order(); 
+
+	// iterate through each subtemplate and enumerate candidate invariants
 	for (const vars_t& vars : vars_traversal_order)
 	{
 		const DataMatrix& data_mat = data_mat_dict[vars];
 		unordered_set<inv_t, VectorHash> invs;
 		enumerate_disj(data_mat, vars, config.max_literal, invs, extended_invs_dict[vars]);
 		invs_dict[vars] = invs;
+		// for each successor of the current subtemplate, project the checked invariants
 		for (map<vars_t, vector<vector<int>>>::iterator it = column_indices_dict[vars].begin(); it != column_indices_dict[vars].end(); it++)
 		{
 			const vars_t& successor = it->first;

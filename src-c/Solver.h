@@ -37,7 +37,9 @@ protected:  // visible to derived class InvRefiner
 	map<vars_t, map<vars_t, vector<vector<int>>>> column_indices_dict;
 	map<vars_t, map<string, vector<int>>> var_in_p_dict;
 	map<vars_t, map<string, int>> p_to_idx_dict;
+	// invs_dict: key: subtemplate; value: checked invariants
 	map<vars_t, unordered_set<inv_t, VectorHash>> invs_dict;
+	// extended_invs_dict: key: subtemplate; value: checked invariants and invariants projected from lower subtemplates
 	map<vars_t, unordered_set<inv_t, VectorHash>> extended_invs_dict;
 	void encode_and_output(const string& infile, const string& outfile, map<int, pair<vars_t, inv_t>>& id_to_inv, const vector<string>& more_invs);
 	

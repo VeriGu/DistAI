@@ -178,6 +178,7 @@ void InvRefiner::infer_more_invs(vector<string>& more_invs)
 						{
 							string relation1 = p1.substr(0, p1.find('('));
 							string relation2 = p2.substr(0, p2.find('('));
+							if (p1.find('(') == string::npos || p2.find('(') == string::npos) continue;
 							if ((left < num_predicates && right < num_predicates) || (left >= num_predicates && right >= num_predicates))
 							{
 								candidates[pair<string, string>(relation1, relation2)] = true;

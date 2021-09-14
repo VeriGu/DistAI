@@ -1,6 +1,6 @@
 # this file parses an Ivy program and emits a protocol simulation script in Python
 # a principled solution, as adopted by I4, is to call the Ivy compiler to generate the syntax tree
-# however, since Ivy is not actively maintained, we ran into painful conflicting dependency issues
+# however, since the Ivy source code is unstable and not well documented, we ran into painful conflicting dependency issues
 # so we eventually took an unorthodox approach: parse an Ivy file from scratch and translates it into Python
 # this file does not aim to be a complete compiler, yet is enough to support the 14 protocols evaluated
 
@@ -8,6 +8,7 @@
 
 
 import sys
+import os
 from translate_helper import *
 from ivy_parser import *
 from collections import Counter, defaultdict
@@ -15,7 +16,7 @@ from itertools import product, chain
 import getopt
 
 SAFETY_PROPERTY_ID = 1000000
-DEFAULT_MAX_ITER = 100
+DEFAULT_MAX_ITER = 50
 SUBSAMPLE_PER_SAMPLE = 3
 MAX_LITIRAL_INIT = 3
 MAX_SIMULATE_ROUND = 1000
@@ -50,6 +51,8 @@ bottleneck, hard = [0], [0]  # whether sampling is going to be bottleneck of sys
 vars_each_type = dict()  # key: type_name, value: [var_name_1,...,var_name_k]
 predicate_columns = []  # element: a predicate (e.g., requested[N1, N2])
 safety_relations = set()  # element: relation_name (when filled)
+order_relations = dict()  # key: relation_name, value: [type_name_1,...,type_name_k]
+forall_exists_function_sizes = {'forall': set(), 'exists': set()}  # element: int, represents number of quantified variabls
 
 
 def parse_type(type_name):
@@ -65,8 +68,12 @@ def parse_type(type_name):
 def parse_relation(relation_str):
     relation_parts = relation_str.replace(')', '(').split('(')
     if len(relation_parts) != 3:
-        print('Unparsable relation: {}'.format(relation_str))
-        exit(-1)
+        if len(relation_parts) == 1:
+            individuals[relation_str.strip()] = 'bool'
+            return
+        else:
+            print('Unparsable relation: {}'.format(relation_str))
+            exit(-1)
     relation_name, parameters_str, _ = relation_parts
     if len(relation_name.split()) > 1:
         print('Invalid relation name: {}'.format(relation_name))
@@ -157,7 +164,7 @@ def default_axiom_rejection_sampling(axiom_str):
     for tree_node in tree_node_list:
         if tree_node.node_type == 'predicate' and tree_node.metadata not in relations_involved:
             relations_involved.append(tree_node.metadata)
-    python_bexpr, python_stmts = ivy_bexpr_to_python_bexpr(axiom_str)
+    python_bexpr, _ = ivy_expr_to_python_expr(axiom_str, evaluate_to_one_boolean=True)
     lines.append('predicates_valid = False')
     lines.append('for retry in range({}):'.format(DEFAULT_AXIOM_MAX_RETRY))
     indent_prefix = '\t'
@@ -175,7 +182,6 @@ def default_axiom_rejection_sampling(axiom_str):
             line = '{} = rng.integers(0, 2, size=({}), dtype=bool)'.format(relation_name, ', '.join(var_num_list))
             init_lines.append(line)
     lines.extend([(indent_prefix + s) for s in init_lines])
-    lines.extend([(indent_prefix + s) for s in python_stmts])
     lines.append('{}if ({}):'.format(indent_prefix, python_bexpr))
     indent_prefix += '\t'
     lines.append('{}predicates_valid = True'.format(indent_prefix))
@@ -278,102 +284,173 @@ def build_initialization_block():
     return lines
 
 
-def ivy_pure_expr_to_python_pure_expr(ivy_expr):
-    assert(type(ivy_expr) == str)
-    assert('->' not in ivy_expr)
-    ivy_expr = ivy_expr.strip()
-    expr_as_list = list(ivy_expr)
-    qvars = dict()   # a dict from quantified variable name to its type
-    strs_to_remove = []  # e.g., 'ring' in 'ring.btw'
-    for name in list(relations.keys()) + list(functions.keys()) + list(module_relations.keys()):
-        if name in relations:
-            type_list = relations[name]
-        elif name in module_relations:
-            strs_to_remove.append(module_relations[name][0] + '.')
-            type_list = module_relations[name][1]
-        else:
-            type_list = functions[name][0]
-        matches = re.finditer('([^0-9a-zA-Z_]|^)' + name + '\(', ivy_expr)
-        for match in matches:
-            # replace () in Ivy with [] in Python
-            left_parenthesis = match.end() - 1
-            right_parenthesis = find_closing_parenthesis(ivy_expr, left_parenthesis)
-            expr_as_list[left_parenthesis] = '['
-            expr_as_list[right_parenthesis] = ']'
-            parameters_str = ivy_expr[left_parenthesis + 1: right_parenthesis]
-            parameter_strs = parameters_str.split(',')
-            assert(len(parameter_strs) == len(type_list))
-            for i, param in enumerate(parameter_strs):
-                param = param.strip()
-                if 'A' <= param[0] <= 'Z':
-                    # quantified variable found
-                    type_name = type_list[i]
-                    qvars[param] = type_name
-    python_expr = ''.join(expr_as_list)
-    for str_to_remove in strs_to_remove:
-        python_expr = python_expr.replace(str_to_remove, '')
-    syntax_map = {'&': 'and', '|': 'or', '~=': '!=', '=': '==', '~': 'not ', '<=': '<=', 'true': 'True', 'false': 'False'}
-    regex = re.compile("|".join(map(re.escape, syntax_map.keys())))
-    python_expr = regex.sub(lambda match: syntax_map[match.group(0)], python_expr)
-    return python_expr, qvars
+def find_implicit_forall_vars(tree_root):
+    implicit_forall_vars = set()
+    tree_nodes = all_nodes_of_tree(tree_root)
+    for tree_node in tree_nodes:
+        if tree_node.node_type == 'qvar':
+            qvar_name = tree_node.substr
+            node_pointer = tree_node
+            explicit_decl_found = False
+            while node_pointer.parent != None:
+                node_pointer = node_pointer.parent
+                if node_pointer.node_type in ['exists', 'forall'] and qvar_name in node_pointer.metadata:
+                    explicit_decl_found = True
+                    break
+            if not explicit_decl_found:
+                implicit_forall_vars.add(qvar_name)
+    return list(implicit_forall_vars)
 
 
-def ivy_bexpr_to_python_bexpr(ivy_bexpr):
-    # return a 2-tuple with type (python_bexpr, python_stmts)
-    # python_bexpr: a string, the equivalent Python expression
-    # python_stmts: the Python statements needed to define python_bexpr
-    ivy_bexpr = remove_implication(ivy_bexpr)
-    ivy_bexpr = translate_remove_le(ivy_bexpr)
-    sub_ivy_bexprs = separate_ivy_bexpr_by_and(ivy_bexpr)
-    pure_python_exprs, python_stmt_blocks, tmp_vars = [], [], []
-    for sub_ivy_bexpr in sub_ivy_bexprs:
-        sub_ivy_bexpr = strip_parenthesis(sub_ivy_bexpr)
-        pure_expr, uqvars, eqvars = extract_leading_quantifiers(sub_ivy_bexpr)
-        python_expr, qvars = ivy_pure_expr_to_python_pure_expr(pure_expr)
-        if len(qvars) == 0:
-            pure_python_exprs.append('({})'.format(python_expr))
+def infer_qvars_type(tree_root, no_type_inference_needed_qvars):
+    tree_nodes = all_nodes_of_tree(tree_root)
+    for tree_node in tree_nodes:
+        if tree_node.node_type == 'qvar':
+            qvar_name = tree_node.substr
+            assert tree_node.parent != None
+            parent_node = tree_node.parent
+            if parent_node.node_type in ['predicate', 'module_predicate']:
+                assert tree_node in parent_node.children
+                qvar_index = parent_node.children.index(tree_node)
+                if parent_node.node_type == 'predicate':
+                    predicate_or_function_name = parent_node.metadata
+                    assert predicate_or_function_name in relations or predicate_or_function_name in functions or predicate_or_function_name in order_relations
+                    if predicate_or_function_name in relations:
+                        qvar_type = relations[predicate_or_function_name][qvar_index]
+                    elif predicate_or_function_name in functions:
+                        qvar_type = functions[predicate_or_function_name][0][qvar_index]
+                    elif predicate_or_function_name in order_relations:
+                        qvar_type = order_relations[predicate_or_function_name][qvar_index]
+                else:
+                    individual_name, relation_name = parent_node.metadata
+                    assert relation_name in module_relations and individual_name == module_relations[relation_name][0]
+                    qvar_type = module_relations[relation_name][1][qvar_index]
+                qvar_type_confirmed = False
+                node_pointer = parent_node
+                while node_pointer.parent != None:
+                    node_pointer = node_pointer.parent
+                    if node_pointer.node_type in ['forall', 'exists'] and qvar_name in node_pointer.metadata:
+                        qvar_type_confirmed = True
+                        if node_pointer.metadata[qvar_name] is None:
+                            node_pointer.metadata[qvar_name] = qvar_type
+                        else:
+                            # the qvar type has been specified in Ivy or inferred by another relation
+                            assert node_pointer.metadata[qvar_name] == qvar_type
+                        break
+                assert qvar_type_confirmed or qvar_name in no_type_inference_needed_qvars
+
+
+def ivy_expr_to_python_expr_rec(tree_root):
+    if tree_root.node_type == 'star':
+        assert tree_root.substr == '*'
+        return 'rng.integers(0, 2, dtype=bool)'
+    elif tree_root.node_type in ['const', 'qvar']:
+        item_str = tree_root.substr
+        if item_str == 'true':
+            item_str = 'True'
+        elif item_str == 'false':
+            item_str = 'False'
+        return item_str
+    elif tree_root.node_type == 'nequal':
+        return '({}) != ({})'.format(ivy_expr_to_python_expr_rec(tree_root.children[0]), ivy_expr_to_python_expr_rec(tree_root.children[1]))
+    elif tree_root.node_type == 'equal':
+        return '({}) == ({})'.format(ivy_expr_to_python_expr_rec(tree_root.children[0]), ivy_expr_to_python_expr_rec(tree_root.children[1]))
+    elif tree_root.node_type in ['predicate', 'module_predicate']:
+        predicate_name = tree_root.metadata if tree_root.node_type == 'predicate' else tree_root.metadata[1]
+        if predicate_name == 'le':
+            return '({}) <= ({})'.format(ivy_expr_to_python_expr_rec(tree_root.children[0]), ivy_expr_to_python_expr_rec(tree_root.children[1]))
         else:
-            tmp_var = 'tmp_var_{}'.format(tmp_var_counter[0])
-            tmp_var_counter[0] += 1
-            tmp_vars.append(tmp_var)
-            if len(eqvars) > 0:
-                for qvar in qvars:
-                    assert(qvar in eqvars)
-                python_block = calc_quantified_expr(python_expr, qvars, 'exists', tmp_var)
-            else:
-                python_block = calc_quantified_expr(python_expr, qvars, 'forall', tmp_var)
-            python_stmt_blocks.append(python_block)
-    anded_pure_expr = ' and '.join(pure_python_exprs)
-    if len(python_stmt_blocks) == 0:
-        python_bexpr = anded_pure_expr
-        python_stmts = []
+            return '{}[{}]'.format(predicate_name, ', '.join([ivy_expr_to_python_expr_rec(child) for child in tree_root.children]))
+    elif tree_root.node_type == 'not':
+        return 'not ({})'.format(ivy_expr_to_python_expr_rec(tree_root.children[0]))
+    elif tree_root.node_type in ['and', 'or']:
+        separator = ' and ' if tree_root.node_type == 'and' else ' or '
+        python_exprs_of_each_child = ['({})'.format(ivy_expr_to_python_expr_rec(child)) for child in tree_root.children]
+        return separator.join(python_exprs_of_each_child)
+    elif tree_root.node_type in ['equiv', 'imply']:
+        python_lhs, python_rhs = ivy_expr_to_python_expr_rec(tree_root.children[0]), ivy_expr_to_python_expr_rec(tree_root.children[1])
+        if tree_root.node_type == 'equiv':
+            return '((not ({})) or ({})) and ((not ({})) or ({}))'.format(python_lhs, python_rhs, python_rhs, python_lhs)
+        elif tree_root.node_type == 'imply':
+            return '(not ({})) or ({})'.format(python_lhs, python_rhs)
+    elif tree_root.node_type in ['forall', 'exists']:
+        # count quantified variables, trigger corresponding function
+        qvar_name_list = list(tree_root.metadata.keys())
+        domain_size_list = ['{}_num'.format(type_name) for type_name in tree_root.metadata.values()]
+        if tree_root.node_type == 'forall':
+            forall_exists_function_sizes['forall'].add(len(qvar_name_list))
+            return 'forall_func_{}({}, (lambda {} : {}))'.format(len(tree_root.metadata), ', '.join(domain_size_list), ','.join(qvar_name_list), ivy_expr_to_python_expr_rec(tree_root.children[0]))
+        elif tree_root.node_type == 'exists':
+            forall_exists_function_sizes['exists'].add(len(qvar_name_list))
+            return 'exists_func_{}({}, (lambda {} : {}))'.format(len(tree_root.metadata), ', '.join(domain_size_list), ','.join(qvar_name_list), ivy_expr_to_python_expr_rec(tree_root.children[0]))
+    elif tree_root.node_type == 'if-else':
+        if_child, branch_condition_child, else_child = tree_root.children
+        return '({}) if ({}) else ({})'.format(ivy_expr_to_python_expr_rec(if_child), ivy_expr_to_python_expr_rec(branch_condition_child), ivy_expr_to_python_expr_rec(else_child))
     else:
-        python_bexpr = ' and '.join(tmp_vars)
-        python_stmts = []
-        indent_prefix = ''
-        if len(pure_python_exprs) > 0:
-            python_stmts.append('{} = False'.format(' = '.join(tmp_vars)))
-            python_stmts.append('if {}:'.format(anded_pure_expr))
-            indent_prefix += '\t'
-        for i, python_block in enumerate(python_stmt_blocks):
-            python_stmts.extend([(indent_prefix + s) for s in python_block])
-            if i != len(python_stmt_blocks) - 1:
-                python_stmts.append('{}if {}:'.format(indent_prefix, tmp_vars[i]))
-            indent_prefix += '\t'
-    return python_bexpr, python_stmts
+        print('Internal error. Unknown tree node type {}'.format(tree_root.node_type))
+        exit(-1)
+
+def ivy_expr_to_python_expr(ivy_expr, evaluate_to_one_boolean):
+    assert(type(ivy_expr) == str)
+    old_tree_root = tree_root = tree_parse_ivy_expr(ivy_expr, None)
+    uqvars = find_implicit_forall_vars(tree_root)
+    if len(uqvars) > 0:
+        # a more aggressive optimization is to recursively go down the tree to find the node where each quantified variable has to appear
+        # currently we only go one layer down
+        uqvars_to_move_down_dict = {}  # key: uqvar_name, value: index of child
+        uqvars_to_move_down_list = [[] for _ in range(len(tree_root.children))]  # each element is a list, represents uqvars of one child
+        if evaluate_to_one_boolean and tree_root.node_type in ['and', 'or']:
+            uqvars_each_child = [find_implicit_forall_vars(child) for child in tree_root.children]
+            for qvar_name in uqvars:
+                qvar_found = [(qvar_name in uqvars_one_child) for uqvars_one_child in uqvars_each_child]
+                if qvar_found.count(True) == 1:
+                    child_index = qvar_found.index(True)
+                    uqvars_to_move_down_dict[qvar_name] = child_index
+                    uqvars_to_move_down_list[child_index].append(qvar_name)
+        for i, uqvars_to_add in enumerate(uqvars_to_move_down_list):
+            if len(uqvars_to_add) > 0:
+                old_child = tree_root.children[i]
+                new_child = TreeNode(tree_root)
+                new_child.node_type = 'forall'
+                new_child.metadata = {uqvar_name: None for uqvar_name in uqvars_to_add}
+                new_child.substr = old_child.substr
+                new_child.children.append(old_child)
+                old_child.parent = new_child
+                tree_root.children[i] = new_child
+        uqvars_remained_at_top = set(uqvars) - set(uqvars_to_move_down_dict.keys())
+        if len(uqvars_remained_at_top) > 0:
+            new_tree_root = TreeNode(None)
+            new_tree_root.node_type = 'forall'
+            new_tree_root.metadata = {uqvar_name: None for uqvar_name in uqvars_remained_at_top}
+            new_tree_root.substr = tree_root.substr
+            new_tree_root.children.append(tree_root)
+            tree_root.parent = new_tree_root
+            tree_root = new_tree_root
+    no_type_inference_needed_qvars = [] if evaluate_to_one_boolean else uqvars
+    infer_qvars_type(tree_root, no_type_inference_needed_qvars)  # add type info for every quantified variable in-place
+    if evaluate_to_one_boolean:
+        # used in require/assume/assert
+        python_expr = ivy_expr_to_python_expr_rec(tree_root)
+        return python_expr, None
+    else:
+        # used in assignment, return the dict of implicit universal quantifiers
+        if old_tree_root == tree_root:
+            python_expr = ivy_expr_to_python_expr_rec(tree_root)
+            return python_expr, {}
+        else:
+            python_expr = ivy_expr_to_python_expr_rec(old_tree_root)
+            return python_expr, tree_root.metadata
 
 
 def translate_assignment(lvalue, rvalue):
     lvalue, rvalue = lvalue.strip(), rvalue.strip()
-    rvalue = translate_remove_le(rvalue)
-    lexpr, lqvars = ivy_pure_expr_to_python_pure_expr(lvalue)
-    rexpr, rqvars = ivy_pure_expr_to_python_pure_expr(rvalue)
+    lexpr, lqvars = ivy_expr_to_python_expr(lvalue, evaluate_to_one_boolean=False)
+    rexpr, rqvars = ivy_expr_to_python_expr(rvalue, evaluate_to_one_boolean=False)
     for qvar, type_name in rqvars.items():
-        assert(lqvars[qvar] == type_name)
+        # It is possible that the type is not inferrable from the RHS. It must be inferrable from the LHS.
+        assert((lqvars[qvar] is not None) and (type_name == lqvars[qvar] or type_name is None))
     if lvalue in individuals and individuals[lvalue] == 'bool':
         lexpr = '{}[0]'.format(lvalue)
-    if rvalue == '*':  # any value:
-        rexpr = 'rng.integers(0, 2, dtype=bool)'
     python_stmts = []
     if len(lqvars) == 0:
         assign_line = '{} = {}'.format(lexpr, rexpr)
@@ -408,10 +485,10 @@ def parse_init_stmt(init_stmt):
 
 def parse_require_stmt(require_stmt):
     # called by parse_action, parse one require line at the beginning of an action
-    python_bexpr, python_stmts = ivy_bexpr_to_python_bexpr(require_stmt)
+    python_bexpr, _ = ivy_expr_to_python_expr(require_stmt, evaluate_to_one_boolean=True)
     first_line = 'if not ({}):'.format(python_bexpr)
     second_line = '\treturn False'
-    return python_stmts + [first_line, second_line]
+    return [first_line, second_line]
 
 
 def parse_instantiation(instantiate_str):
@@ -446,6 +523,14 @@ def parse_axiom(axiom_str, from_init_not_axiom=False):
     axiom_recognized = False
     tree_root = tree_parse_ivy_expr(axiom_str, None)
     tree_root = standardize_tree(tree_root)
+    def remove_leading_foralls_if_not_followed_by_exists(start_node):
+        cur_node = start_node
+        while cur_node.node_type == 'forall':
+            cur_node = cur_node.children[0]
+        if cur_node.node_type != 'exists':
+            return cur_node
+        return start_node
+    tree_root = remove_leading_foralls_if_not_followed_by_exists(tree_root)
     if tree_root.node_type == 'imply':
         left_child, right_child = tree_root.children
         if right_child.node_type == 'equal' and right_child.children[0].node_type == 'qvar' and right_child.children[1].node_type == 'qvar' and right_child.children[0].substr != right_child.children[1].substr:
@@ -562,6 +647,12 @@ def parse_axiom(axiom_str, from_init_not_axiom=False):
                     if 'symmetry' not in axioms:
                         axioms['symmetry'] = []
                     axioms['symmetry'].append((lcc.metadata, True))
+            elif left_child.node_type == right_child.node_type == 'predicate':
+                if left_child.metadata == right_child.metadata and len(left_child.children) == len(right_child.children) == 2 and left_child.children[0].substr != left_child.children[1].substr and left_child.children[0].substr == right_child.children[1].substr and left_child.children[1].substr == right_child.children[0].substr:
+                    axiom_recognized = True
+                    if 'totality' not in axioms:
+                        axioms['totality'] = []
+                    axioms['totality'].append(left_child.metadata)
     elif tree_root.node_type == 'predicate':
         if len(tree_root.children) == 2:
             if tree_root.children[0].substr == tree_root.children[1].substr:
@@ -597,12 +688,12 @@ def parse_axiom(axiom_str, from_init_not_axiom=False):
                     axioms['nequal'] = []
                 axioms['nequal'].append((const1, const2))
     elif tree_root.node_type == 'forall':
-        uqvars = tree_root.metadata
+        uqvars = list(tree_root.metadata.keys())
         if len(uqvars) == 2 and tree_root.children[0].node_type == 'exists':
             uqvar1, uqvar2 = uqvars
             exists_node = tree_root.children[0]
             if len(exists_node.metadata) == 1 and exists_node.children[0].node_type == 'and' and len(exists_node.children[0].children) == 2:
-                eqvar = exists_node.metadata[0]
+                eqvar = list(exists_node.metadata.keys())[0]
                 and_left, and_right = exists_node.children[0].children
                 if and_left.node_type == and_right.node_type == 'predicate' and and_left.metadata == and_right.metadata and len(and_left.children) == len(and_right.children) == 2:
                     relation_name = and_left.metadata
@@ -621,20 +712,6 @@ def parse_axiom(axiom_str, from_init_not_axiom=False):
         for tree_node in tree_node_list:
             if tree_node.node_type == 'predicate':
                 axiom_default_relations.append(tree_node.metadata)
-
-
-def parse_if_block(if_cond, if_stmts):
-    lines = []
-    python_bexpr, python_pre_stmts = ivy_bexpr_to_python_bexpr(if_cond)
-    lines.extend(python_pre_stmts)
-    lines.append('if {}:'.format(python_bexpr))
-    body_lines = []
-    for line in if_stmts:
-        lvalue, rvalue = line[: -1].split(':=')
-        python_assign_stmts = translate_assignment(lvalue, rvalue)
-        body_lines.extend(python_assign_stmts)
-    lines.extend([('\t' + s) for s in body_lines])
-    return lines
 
 
 def simplify_python_conds_and_action_params_when_this_require_is_partial_function(action_name, require_stmt, python_conds):
@@ -741,8 +818,7 @@ def parse_assume_block(tainted_exprs, assume_stmts):
         lines.append('# 2) modify the while loop below to make sampling more efficient')
         lines.append('while True:')
         for assume_stmt in assume_stmts:
-            python_bexpr, python_stmts = ivy_bexpr_to_python_bexpr(assume_stmt)
-            lines.extend([('\t' + s) for s in python_stmts])
+            python_bexpr, _ = ivy_expr_to_python_expr(assume_stmt, evaluate_to_one_boolean=False)
             lines.append('\tif not {}:'.format(python_bexpr))
             for ivy_expr in tainted_exprs:
                 assignment_lines = translate_assignment(ivy_expr, '*')
@@ -788,51 +864,211 @@ def parse_action(action_str, action_buffer):
         assert(len(name_type_pair) == 2)
         param, type_name = name_type_pair[0].strip(), name_type_pair[1].strip()
         actions[action_name].append((param, type_name))
-    in_prec, in_if = True, False
-    if_cond, if_stmts = '', []
-    assume_stmts, tainted_exprs = [], []
-    for line in action_buffer:
-        assert (line[-1] == ';' or (line.startswith('if') and line[-1] == '{'))
-        if (line.startswith('require') or line.startswith('assume')) and in_prec:
-            start_str = 'require' if line.startswith('require') else 'assume'
-            require_stmt = line[len(start_str)+1: -1].strip()
-            python_conds = parse_require_stmt(require_stmt)
-            simplify_python_conds_and_action_params_when_this_require_is_partial_function(action_name, require_stmt, python_conds)
-            for python_cond in python_conds:
-                action_precs[action_name].append('\t{}'.format(python_cond))
-        else:
-            assert(in_prec or not line.startswith('require'))
-            in_prec = False
-            if in_if:
-                if line == '};':
-                    python_stmts = parse_if_block(if_cond, if_stmts)
-                    for python_stmt in python_stmts:
-                        action_trans[action_name].append('\t{}'.format(python_stmt))
-                    in_if = False
+
+    def ensure_at_most_one_semicolon_each_line(lines):
+        # split lines with more than one semicolon, ensure semicolon can only appear at the end of the line
+        # assume comments have been removed
+        newlines = []
+        for line in lines:
+            line_splitted = line.split(';')
+            line_splitted = [segment.strip() for segment in line_splitted]
+            for segment in line_splitted[:-1]:
+                if segment != '':
+                    newlines.append(segment + ';')
+            if line_splitted[-1] != '':
+                newlines.append(line_splitted[-1])
+        return newlines
+
+    def regularize_braces(lines):
+        # ensure each brace ('{' or '}') occupies one line
+        newlines = []
+        for line in lines:
+            brace_indices = [match.start() for match in re.finditer('[{}]', line)]
+            for i in range(len(brace_indices)):
+                if i == 0:
+                    start_idx = 0
                 else:
-                    assert(not line.startswith('if'))  # no nested if now
-                    if_stmts.append(line)
-            elif line.startswith('if') and line[-1] == '{':
-                if_cond = strip_parenthesis(line[2:-1].strip()).strip()
-                in_if = True
-            elif line.startswith('assume') and line[-1] == ';':
-                assume_stmts.append(line[len('assume'): -1].strip())
+                    start_idx = brace_indices[i - 1] + 1
+                newline = line[start_idx: brace_indices[i]].strip()
+                if newline != '':
+                    newlines.append(newline)
+                newlines.append(line[brace_indices[i]])
+            if len(brace_indices) > 0:
+                start_idx = brace_indices[-1] + 1
             else:
-                assign_splitted = line[: -1].split(':=')
-                assert(len(assign_splitted) == 2)
+                start_idx = 0
+            newline = line[start_idx:].strip()
+            if newline != '':
+                newlines.append(newline)
+        return newlines
+
+    action_buffer = ensure_at_most_one_semicolon_each_line(action_buffer)
+    action_buffer = regularize_braces(action_buffer)
+
+    def tree_parse_action_body(lines_in_action, parent_node):
+        current_env, buffer_pending_semicolon = '', ''
+        last_line_is_if, last_line_is_else = False, False
+        if_active, else_active, branch_condition, branch_body_buffer = False, False, None, []
+        brace_imbalance = 0  # number of left braces minus number of right braces
+        this_node = TreeNode(parent_node)
+        # the field substr is empty and should not be used
+        for line_number, line in enumerate(lines_in_action):
+            if last_line_is_if or last_line_is_else:
+                assert line == '{'
+                brace_imbalance = 1
+                last_line_is_if, last_line_is_else = False, False
+                continue
+            if line.startswith('require') or line.startswith('assume') or line.startswith('assert'):
+                if current_env != '':
+                    print('Syntax error in action {}'.format(action_name))
+                    exit(-1)
+                current_env = 'require' if line.startswith('require') else ('assume' if line.startswith('assume') else 'assert')
+                line = line[len(current_env):].strip()
+            if current_env != '':
+                # the current line is within a require/assume/assert statement
+                if line != '' and line[-1] == ';':
+                    buffer_pending_semicolon += line[:-1]
+                    child_node = TreeNode(this_node)
+                    child_node.node_type = current_env
+                    child_node.metadata = buffer_pending_semicolon
+                    this_node.children.append(child_node)
+                    current_env, buffer_pending_semicolon = '', ''
+                else:
+                    # looking for ';' to close a statement
+                    buffer_pending_semicolon += ' ' + line
+            else:
+                if line.startswith('if'):
+                    branch_condition = line[len('if'):].strip()  # we assume the branch condition follows keyword "if" on the same line
+                    if_active, last_line_is_if = True, True
+                elif line.startswith('else'):
+                    else_active, last_line_is_else = True, True
+                elif if_active or else_active:
+                    if line == '{':
+                        brace_imbalance += 1
+                    elif line == '}':
+                        brace_imbalance -= 1
+                    if brace_imbalance == 0:
+                        if if_active:
+                            child_node = TreeNode(this_node)
+                            child_node.node_type = 'if'
+                            child_node.metadata = branch_condition
+                            if_child_child = tree_parse_action_body(branch_body_buffer, child_node)
+                            if_child_child.node_type = 'transition_block'
+                            child_node.children.append(if_child_child)
+                            this_node.children.append(child_node)
+                        else:
+                            child_node = this_node.children[-1]
+                            child_node.node_type = 'if-else'
+                            else_child_child = tree_parse_action_body(branch_body_buffer, child_node)
+                            else_child_child.node_type = 'transition_block'
+                            child_node.children.append(else_child_child)
+                        if_active, else_active = False, False
+                        branch_body_buffer = []
+                    else:
+                        branch_body_buffer.append(line)
+                else:
+                    # an action transition statement
+                    if line[-1] == ';' or line_number == len(lines_in_action) - 1:  # last line in action can omit ';'
+                        buffer_pending_semicolon += line[:-1] if line[-1] == ';' else line
+                        if buffer_pending_semicolon != '':
+                            child_node = TreeNode(this_node)
+                            child_node.node_type = 'transition'
+                            child_node.metadata = buffer_pending_semicolon
+                            this_node.children.append(child_node)
+                            buffer_pending_semicolon = ''
+                    else:
+                        buffer_pending_semicolon += ' ' + line
+        if buffer_pending_semicolon != '':
+            print('Syntax error in action {}'.format(action_name))
+            exit(-1)
+        return this_node
+
+
+    def translate_transition_block_node_to_action_transition_stmts(transition_block_node):
+        lines = []
+        for child in transition_block_node.children:
+            if child.node_type in ['require', 'assume', 'assert']:
+                print('DistAI does not allow if/else branch to contain require/assume/assert statements.')
+                exit(-1)
+            assert child.node_type in ['transition', 'if', 'if-else']
+            if child.node_type == 'transition':
+                transition_stmt = child.metadata
+                assign_splitted = transition_stmt.split(':=')
+                assert (len(assign_splitted) == 2)
+                lvalue, rvalue = assign_splitted[0].strip(), assign_splitted[1].strip()
+                if rvalue == '*':
+                    print('DistAI does not support "lvalue := *" in if/else branch.')
+                    exit(-1)
+                lines.extend(translate_assignment(lvalue, rvalue))
+            else:
+                branched_code_block = translate_if_or_ifelse_node_to_action_transition_stmts(child)
+                lines.extend(branched_code_block)
+        return lines
+
+    def translate_if_or_ifelse_node_to_action_transition_stmts(branch_node):
+        lines = []
+        branch_cond = branch_node.metadata
+        python_bexpr, _ = ivy_expr_to_python_expr(branch_cond, evaluate_to_one_boolean=True)
+        lines.append('if {}:'.format(python_bexpr))
+        python_if_stmts = translate_transition_block_node_to_action_transition_stmts(branch_node.children[0])
+        lines.extend([('\t' + s) for s in python_if_stmts])
+        if branch_node.node_type == 'if-else':
+            lines.append('else:')
+            python_else_stmts = translate_transition_block_node_to_action_transition_stmts(branch_node.children[1])
+            lines.extend([('\t' + s) for s in python_else_stmts])
+        return lines
+
+    action_tree_root = tree_parse_action_body(action_buffer, None)
+    REQUIRE_STAGE, TRANSITION_STAGE, POSTCOND_STAGE = 1, 2, 3  # python has no enum type
+    curr_stage = REQUIRE_STAGE
+    tainted_exprs, postcond_stmts = [], []
+    action_precondition_stmts, action_transition_stmts = [], []
+    for child in action_tree_root.children:
+        if child.node_type == 'require' or child.node_type == 'assume':
+            if curr_stage == REQUIRE_STAGE:
+                require_stmt = child.metadata
+                python_conds = parse_require_stmt(require_stmt)
+                simplify_python_conds_and_action_params_when_this_require_is_partial_function(action_name, require_stmt, python_conds)
+                action_precondition_stmts.extend(python_conds)
+            else:
+                if child.node_type == 'require':
+                    print('Cannot translate action {}. Require statement can only appear at the beginning of an action.'.format(action_name))
+                    exit(-1)
+                assert child.node_type == 'assume'
+                curr_stage = POSTCOND_STAGE
+                assume_stmt = child.metadata
+                postcond_stmts.append(assume_stmt)
+        elif child.node_type == 'assert':
+            pass  # ignore assert in parsing
+        elif child.node_type in ['transition', 'if', 'if-else']:
+            if curr_stage == POSTCOND_STAGE:
+                print('Cannot translate action {}. "assume" can only appear at the beginning of an action to represent pre-condition, '
+                      'or appear at the end of an action to represent post-condition. It cannot interleave with state transition.'.format(action_name))
+                exit(-1)
+            curr_stage = TRANSITION_STAGE
+            if child.node_type == 'transition':
+                transition_stmt = child.metadata
+                assign_splitted = transition_stmt.split(':=')
+                assert (len(assign_splitted) == 2)
                 lvalue, rvalue = assign_splitted[0].strip(), assign_splitted[1].strip()
                 if rvalue == '*':
                     tainted_exprs.append(lvalue)
-                python_stmts = translate_assignment(lvalue, rvalue)
-                for python_stmt in python_stmts:
-                    action_trans[action_name].append('\t{}'.format(python_stmt))
-    python_stmts = parse_assume_block(tainted_exprs, assume_stmts)
-    for python_stmt in python_stmts:
-        action_trans[action_name].append('\t{}'.format(python_stmt))
-    action_precs[action_name].append('\treturn True')
+                action_transition_stmts.extend(translate_assignment(lvalue, rvalue))
+            else:
+                branched_code_block = translate_if_or_ifelse_node_to_action_transition_stmts(child)
+                action_transition_stmts.extend(branched_code_block)
+        else:
+            print('Internal error. Unrecognized action syntax tree node type in action {}'.format(action_name))
+            exit(-1)
+    action_transition_stmts.extend(parse_assume_block(tainted_exprs, postcond_stmts))
+    action_precondition_stmts.append('return True')
     # finally, add function declaration and prefix lines (for partial functions) at top
-    action_precs[action_name][:0] = [('\t' + s) for s in action_prefixes[action_name]]
-    action_trans[action_name][:0] = [('\t' + s) for s in action_prefixes[action_name]]
+    action_precondition_stmts[:0] = [s for s in action_prefixes[action_name]]
+    action_transition_stmts[:0] = [s for s in action_prefixes[action_name]]
+    for python_cond in action_precondition_stmts:
+        action_precs[action_name].append('\t{}'.format(python_cond))
+    for python_stmt in action_transition_stmts:
+        action_trans[action_name].append('\t{}'.format(python_stmt))
     param_list = [param for (param, type_name) in actions[action_name]]
     cond_func_decl = 'def {}_prec({}):'.format(action_name, ', '.join(param_list))
     action_precs[action_name].insert(0, cond_func_decl)
@@ -842,8 +1078,23 @@ def parse_action(action_str, action_buffer):
 
 def parse_invariant(invariant_lines):
     inv_str = ' '.join(invariant_lines).strip()
-    assert(inv_str.startswith('[{}]'.format(SAFETY_PROPERTY_ID)))
-    inv_str = inv_str[len('[{}]'.format(SAFETY_PROPERTY_ID)) + 1:].strip()
+    match_obj = re.match('^\[(.*)\](.*)$', inv_str)
+    if match_obj is not None:
+        inv_id = match_obj.groups()[0].strip()
+        should_exit = False
+        try:
+            inv_id_int = int(inv_id)
+            assert inv_id_int == SAFETY_PROPERTY_ID
+        except:
+            should_exit = True
+        inv_str = match_obj.groups()[1].strip()
+    else:
+        should_exit = True
+    if should_exit:
+        print('Error! Please use identifier {} for safety property in Ivy file. It should be'.format(SAFETY_PROPERTY_ID))
+        print('\tinvarint [{}] safety_property_formula'.format(SAFETY_PROPERTY_ID))
+        print('No other invariant should be provided.')
+        exit(-1)
     tree_root = tree_parse_ivy_expr(inv_str, None)
     if tree_root.node_type == 'and':
         inv_str_list = [child.substr for child in tree_root.children]
@@ -859,6 +1110,7 @@ def parse_ivy_file(ivy_file):
     in_after_init, in_action, in_module, in_invariant = False, False, False, False
     action_str, action_buffer = '', []
     module_str = ''
+    brace_imbalance = 0
     invariant_buffer = []
     for line_num, line in enumerate(lines):
         # remove comment suffix
@@ -875,7 +1127,8 @@ def parse_ivy_file(ivy_file):
                 init_block.extend(parse_init_stmt(line))
 
         elif in_action:    # in action scope
-            if line == '}':
+            brace_imbalance += line.count('{') - line.count('}')
+            if line == '}' and brace_imbalance == 0:
                 parse_action(action_str, action_buffer)
                 action_str = ''
                 action_buffer.clear()
@@ -884,7 +1137,8 @@ def parse_ivy_file(ivy_file):
                 action_buffer.append(line)
 
         elif in_module:
-            if line == '}':
+            brace_imbalance += line.count('{') - line.count('}')
+            if line == '}' and brace_imbalance == 0:
                 in_module = False
 
         elif in_invariant:
@@ -929,16 +1183,18 @@ def parse_ivy_file(ivy_file):
                     exit(-1)
                 calc_minimum_sizes()
                 calc_type_abbrs()
-                resolve_total_orders()
                 merge_axioms()
+                handle_special_relations()
                 in_after_init = True
 
             elif line.startswith('action'):
                 action_str = line[len('action')+1:].strip()
+                brace_imbalance = 1
                 in_action = True
 
             elif line.startswith('module'):
                 in_module = True
+                brace_imbalance = 1
                 module_str = line[len('module')+1:].split('=')[0].strip()
                 if not find_module(module_str):
                     print('Unsupported module {}'.format(module_str))
@@ -985,7 +1241,7 @@ def calc_minimum_sizes():
             types[type_name] = max(types[type_name], count)
     # some types have heuristic rules, you can modify or add your own rules
     if 'node' in types and 'node' not in user_specified_min_size:
-        if 'quorum' in types:
+        if 'quorum' in types and 'round' not in types:
             # at least 3 nodes needed to distinguish majority from minority
             types['node'] = max(types['node'], 3)
         else:
@@ -1002,7 +1258,7 @@ def calc_minimum_sizes():
     # when the initial size fails (refinement fails), increase template size
     while num_attempt[0] > 0:
         types_copy = types.copy()
-        for type_name in sorted(types_copy.keys()):
+        for type_name in sorted(types_copy, key=lambda x: types_copy[x]):
             minimum_size = types[type_name]
             if num_attempt[0] == 0:
                 finished = True
@@ -1038,22 +1294,36 @@ def calc_type_abbrs():
                 type_abbrs[second_type_list[0]] = first_char.upper() + second_char.upper()
 
 
-def resolve_total_orders():
-    le_relations = []
+def handle_special_relations():
     for relation_name, relation_signature in relations.items():
         if relation_name == 'le':
-            assert('total_order' in instantiations and relation_name in instantiations['total_order'])
+            assert(('total_order' in instantiations and relation_name in instantiations['total_order']) or ('total-order' in axioms and relation_name in axioms['total-order']))
             assert(len(relation_signature) == 2 and relation_signature[0] == relation_signature[1])
             type_name = relation_signature[0]
             total_ordered_types.append(type_name)
-            le_relations.append(relation_name)
-    for relation_name in le_relations:
+            order_relations[relation_name] = relation_signature
+        if relation_name == 'btw' and relation_signature == ['node', 'node', 'node']:
+            print('If btw is the ternary between relation of nodes in a ring, please wrap it in a ring_topology module, and instantiate the module with ring.')
+            print('See https://github.com/VeriGu/DistAI/blob/master/protocols/chord/chord.ivy')
+            exit(-1)
+    for relation_name in order_relations:
         del(relations[relation_name])
 
 
 def merge_axioms():
     # some axioms may collectively express a property. If detected, remove old axioms and set new ones
+    # currently supports two properties: 1) 4 axioms -> total order 2) 5 axioms -> conditional total order
+    relations_to_remove = []
     relation_pairs_to_remove = []
+    if 'totality' in axioms:
+        for relation in axioms['totality']:
+            if 'transitivity' in axioms and relation in axioms['transitivity']:
+                if 'reflexivity' in axioms and (relation, True) in axioms['reflexivity']:
+                    if 'symmetry' in axioms and (relation, False) in axioms['symmetry']:
+                        if 'total-order' not in axioms:
+                            axioms['total-order'] = []
+                        axioms['total-order'].append(relation)
+                        relations_to_remove.append(relation)
     if 'cond-closed' in axioms and 'cond-total' in axioms:
         for relation1, relation2 in axioms['cond-closed']:
             if (relation1, relation2) in axioms['cond-total']:
@@ -1065,6 +1335,11 @@ def merge_axioms():
                                 axioms['cond-total-order'] = []
                             axioms['cond-total-order'].append((relation1, relation2))
                             relation_pairs_to_remove.append((relation1, relation2))
+    for relation in relations_to_remove:
+        axioms['totality'].remove(relation)
+        axioms['transitivity'].remove(relation)
+        axioms['symmetry'].remove((relation, False))
+        axioms['reflexivity'].remove((relation, True))
     for relation1, relation2 in relation_pairs_to_remove:
         axioms['cond-closed'].remove((relation1, relation2))
         axioms['cond-total'].remove((relation1, relation2))
@@ -1123,11 +1398,46 @@ def enumerate_predicates():
             ele1, ele2, ele3 = vars_each_type[element_type]
             predicate_columns.append('btw[{},{},{}]'.format(ele1, ele2, ele3))
     for idv_name, idv_type in individuals.items():
-        if idv_type not in total_ordered_types and idv_type != 'bool':
-            for vars_name in vars_each_type[idv_type]:
-                predicate_columns.append('{}=={}'.format(idv_name, vars_name))
-        elif idv_type == 'bool':
+        if idv_type == 'bool':
             predicate_columns.append('{}[0]'.format(idv_name))
+        else:
+            if idv_type in total_ordered_types:
+                # pass
+                for vars_name in vars_each_type[idv_type]:
+                    predicate_columns.append('{}=={}'.format(idv_name, vars_name))
+            else:
+                for vars_name in vars_each_type[idv_type]:
+                    predicate_columns.append('{}=={}'.format(idv_name, vars_name))
+
+
+def build_forall_exists_functions():
+    lines = []
+    for qvar_num in forall_exists_function_sizes['forall']:
+        lines.append('')
+        domain_size_list = ['domain_size_{}'.format(i) for i in range(1, qvar_num + 1)]
+        lines.append('def forall_func_{}({}, func):'.format(qvar_num, ', '.join(domain_size_list)))
+        indent_prefix = '\t'
+        for i in range(1, qvar_num + 1):
+            lines.append('{}for x{} in range(domain_size_{}):'.format(indent_prefix, i, i))
+            indent_prefix += '\t'
+        lines.append('{}if not func({}):'.format(indent_prefix, ', '.join(['x{}'.format(i) for i in range(1, qvar_num + 1)])))
+        indent_prefix += '\t'
+        lines.append('{}return False'.format(indent_prefix))
+        lines.append('\treturn True')
+    for qvar_num in forall_exists_function_sizes['exists']:
+        lines.append('')
+        domain_size_list = ['domain_size_{}'.format(i) for i in range(1, qvar_num + 1)]
+        lines.append('def exists_func_{}({}, func):'.format(qvar_num, ', '.join(domain_size_list)))
+        indent_prefix = '\t'
+        for i in range(1, qvar_num + 1):
+            lines.append('{}for x{} in range(domain_size_{}):'.format(indent_prefix, i, i))
+            indent_prefix += '\t'
+        lines.append('{}if func({}):'.format(indent_prefix, ', '.join(['x{}'.format(i) for i in range(1, qvar_num + 1)])))
+        indent_prefix += '\t'
+        lines.append('{}return True'.format(indent_prefix))
+        lines.append('\treturn False')
+    lines.append('')
+    return lines
 
 
 def build_instance_generator():
@@ -1210,7 +1520,7 @@ def build_sample_function():
     if EXACT_NUM_OF_SAMPLE[0] > 0:
         lines.append('{}exact_sample_number += 1'.format(indent_prefix))
     lines.append('')
-    lines.append('{}# generate all subsamples from the current state (sample)'.format(indent_prefix))
+    lines.append('{}# generate subsamples from the current state (sample)'.format(indent_prefix))
     lines.append('{}for k in range({}):'.format(indent_prefix, SUBSAMPLE_PER_SAMPLE))
     indent_prefix += '\t'
     one_to_one_f, one_to_one_in_type, one_to_one_out_type = get_one_to_one()
@@ -1285,6 +1595,7 @@ def write_python_file(python_file):
         add_blank_line()
         python_codes.extend(action_trans[action_name])
         add_blank_line()
+    python_codes.extend(build_forall_exists_functions())
     python_codes.append(get_func_name_line())
     add_blank_line()
     python_codes.extend(build_instance_generator())
@@ -1338,15 +1649,17 @@ def emit_config_file(config_file):
 
 
 def translate_ivy_to_python(PROBLEM):
-    parse_ivy_file('../protocols/{}/{}.ivy'.format(PROBLEM, PROBLEM))
-    write_python_file('../auto_samplers/{}.py'.format(PROBLEM))
-    emit_config_file('../configs/{}.txt'.format(PROBLEM))
+    input_ivy_file = '../protocols/{}/{}.ivy'.format(PROBLEM, PROBLEM)
+    simulation_file = '../auto_samplers/{}.py'.format(PROBLEM)
+    config_file = '../configs/{}.txt'.format(PROBLEM)
+    if os.path.exists(simulation_file):
+        os.remove(simulation_file)
+    if os.path.exists(config_file):
+        os.remove(config_file)
+    parse_ivy_file(input_ivy_file)
+    write_python_file(simulation_file)
+    emit_config_file(config_file)
     print('Instrumenting finished. Simulation script written to auto_samplers/{}.py'.format(PROBLEM))
-
-
-def setup_directory(PROBLEM):
-    from pathlib import Path
-    Path("../src-c/runtime/{}".format(PROBLEM)).mkdir(parents=True, exist_ok=True)
 
 
 if __name__ == '__main__':
@@ -1379,8 +1692,7 @@ if __name__ == '__main__':
 
     except getopt.GetoptError:
         print('Invalid command-line argument')
-        sys.exit(-1)
+        exit(-1)
 
 
     translate_ivy_to_python(PROBLEM)
-    setup_directory(PROBLEM)

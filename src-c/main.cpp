@@ -39,6 +39,8 @@ int main(int argc, char* argv[])
 	auto refinement_time = std::chrono::steady_clock::now() - std::chrono::steady_clock::now();
 	int invariant_num = 0;
 	bool lower_literal_inv_discarded = false, lower_subtemplate_inv_discarded = false;
+
+	// increase the max-literal after each failed refinement
 	while(!success && num_attempt <= max_retry)
 	{
 		if (num_attempt > 0) 

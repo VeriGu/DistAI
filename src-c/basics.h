@@ -45,8 +45,8 @@ struct DataMatrix
 	int ncol;
 };
 
-typedef vector<string> vars_t;  // e.g., ['N1', 'N2', 'K0']
-typedef vector<int> inv_t;      // e.g., [3, 4, 7]
+typedef vector<string> vars_t;  // a set of quantified variables, e.g., ['N1', 'N2', 'K0']
+typedef vector<int> inv_t;      // a candidate invariant represented by column indices of predicates, e.g., [3, 4, 7]
 
 void join_string(const vector<string>& v, char c, string& s);
 void join_string(const vector<string>& v, const string& c, string& s);

@@ -25,45 +25,6 @@ def separate_ivy_bexpr_by_and(ivy_bexpr):
     return sub_ivy_bexprs
 
 
-def remove_implication(ivy_bexpr):
-    matches = list(re.finditer('->', ivy_bexpr))
-    assert(len(matches) <= 1)
-    if len(matches) == 1:
-        match = matches[0]
-        lstart, rstart = match.start() - 1, match.end()
-        lcount, rcount = 0, 0
-        lpos, rpos = -1, -1  # the boundary of subexpr guarded by '->'
-        for i in range(lstart, -1, -1):
-            if ivy_bexpr[i] == '(':
-                lcount += 1
-            elif ivy_bexpr[i] == ')':
-                lcount -= 1
-            if lcount == 1:
-                lpos = i + 1
-                break
-        for i in range(rstart, len(ivy_bexpr), 1):
-            if ivy_bexpr[i] == '(':
-                rcount += 1
-            elif ivy_bexpr[i] == ')':
-                rcount -= 1
-            if rcount == -1:
-                rpos = i
-                break
-        assert((lpos == rpos == -1) or (rpos > lpos >= 0))
-        if lpos == rpos == -1:
-            dot_matches = list(re.finditer('\.', ivy_bexpr))
-            assert(len(dot_matches) <= 1)
-            if len(dot_matches) == 0:
-                lpos, rpos = 0, len(ivy_bexpr)
-            else:
-                lpos, rpos = dot_matches[0].end(), len(ivy_bexpr)
-        lsubexpr, rsubexpr = ivy_bexpr[lpos: match.start()].strip(), ivy_bexpr[match.end():rpos].strip()
-        new_bexpr = '~({}) | ({})'.format(lsubexpr, rsubexpr)
-    else:
-        new_bexpr = ivy_bexpr
-    return new_bexpr
-
-
 def translate_remove_le(ivy_expr):
     curr_expr = ivy_expr
     match = re.search('([^a-zA-Z0-9_]|^)le\(', curr_expr)
