@@ -62,7 +62,7 @@ def parse_type(type_name):
     if type_name in types:
         print('Redeclared type: {}'.format(type_name))
         exit(-1)
-    types[type_name] = user_specified_min_size[type_name] if type_name in user_specified_min_size else 0
+    types[type_name] = user_specified_min_size[type_name] if type_name in user_specified_min_size else 1
 
 
 def parse_relation(relation_str):
@@ -172,7 +172,7 @@ def default_axiom_rejection_sampling(axiom_str):
     for relation_name in relations_involved:
         if 'partial-func' in axioms and relation_name in axioms['partial-func']:
             domain_is_first, is_invariant = axioms['partial-func'][relation_name]
-            assert(is_invariant)
+            # assert(is_invariant)
             first_type, second_type = relations[relation_name]
             init_lines.extend(get_partial_function_init_lines(relation_name, first_type, second_type, domain_is_first))
         else:
@@ -206,7 +206,7 @@ def build_initialization_block():
             lines.append('{} = rng.integers(0, 2, size=(1), dtype=bool)'.format(idv_name))
         else:
             assert(idv_type in types)
-            lines.append('{} = rng.integers(0, {}_num)'.format(idv_name, idv_type))
+            lines.append('{} = rng.integers(0, {}_num, size=(1))'.format(idv_name, idv_type))
     for func_name, (in_type_list, out_type) in functions.items():
         if 'one-to-one-f' in axioms and axioms['one-to-one-f'] == func_name:
             assert(len(in_type_list) == 1)
@@ -238,14 +238,14 @@ def build_initialization_block():
                 lines.extend(['for i in range(1, {}_num):'.format(type_name), '\tfor j in range(0, i):', '\t\t{}[i,j] = not {}[j,i]'.format(relation_name, relation_name)])
                 lines.extend(['for i in range({}_num):'.format(type_name), '\t{}[i,i] = False'.format(relation_name)])
     if 'least' in axioms:
-        lines.append('{} = 0'.format(axioms['least']))
+        lines.append('{} = [0]'.format(axioms['least']))
     if 'nonleast' in axioms:
         for nonleast_idv in axioms['nonleast']:
-            lines.append('{} = rng.integers(1, {}_num)'.format(nonleast_idv, individuals[nonleast_idv]))
+            lines.append('{} = rng.integers(1, {}_num, size=(1))'.format(nonleast_idv, individuals[nonleast_idv]))
     if 'nequal' in axioms:
         for const1, const2 in axioms['nequal']:
             assert(const1 in individuals and const2 in individuals and individuals[const1] == individuals[const2])
-            lines.append('{}, {} = rng.choice({}_num, 2, replace=False)'.format(const1, const2, individuals[const1]))
+            lines.append('{}, {} = rng.choice({}_num, (2,1), replace=False)'.format(const1, const2, individuals[const1]))
     if 'qmembership' in axioms:
         for qmember_relation in axioms['qmembership']:
             assert(len(relations[qmember_relation]) == 2)
@@ -350,7 +350,10 @@ def ivy_expr_to_python_expr_rec(tree_root):
             item_str = 'True'
         elif item_str == 'false':
             item_str = 'False'
-        return item_str
+        if tree_root.node_type == 'const' and item_str in individuals:
+            return item_str + '[0]'
+        else:
+            return item_str
     elif tree_root.node_type == 'nequal':
         return '({}) != ({})'.format(ivy_expr_to_python_expr_rec(tree_root.children[0]), ivy_expr_to_python_expr_rec(tree_root.children[1]))
     elif tree_root.node_type == 'equal':
@@ -470,9 +473,10 @@ def parse_init_stmt(init_stmt):
     assert(init_stmt[-1] == ';')
     init_stmt_splitted = init_stmt[:-1].split(':=')
     if len(init_stmt_splitted) != 2:
-        if init_stmt.startswith('require'):
+        if init_stmt.startswith('require') or init_stmt.startswith('assume'):
             # non-deterministic initialization
-            axiom_str = init_stmt[len('require') + 1: -1].strip()
+            keyword = 'require' if init_stmt.startswith('require') else 'assume'
+            axiom_str = init_stmt[len(keyword): -1].strip()
             parse_axiom(axiom_str, from_init_not_axiom=True)
             return []
         else:
@@ -863,6 +867,9 @@ def parse_action(action_str, action_buffer):
         name_type_pair = name_type_pair.split(':')
         assert(len(name_type_pair) == 2)
         param, type_name = name_type_pair[0].strip(), name_type_pair[1].strip()
+        if param in individuals:
+            print('Error! {} is double declared. It is declared both as an individual and as an argument of action {}. Please rename one of them.'.format(param, action_name))
+            exit(-1)
         actions[action_name].append((param, type_name))
 
     def ensure_at_most_one_semicolon_each_line(lines):
@@ -1249,6 +1256,10 @@ def calc_minimum_sizes():
             types['node'] = max(types['node'], 2)
     if 'key' in types and 'value' in types:
         types['value'] = max(types['value'], 2)
+    if 'nequal' in axioms:
+        for const1, const2 in axioms['nequal']:
+            assert(const1 in individuals and const2 in individuals and individuals[const1] == individuals[const2])
+            types[individuals[const1]] = max(types[individuals[const1]], 2)
     # some modules have predefined rules
     smodule = 'ring_topology'
     if smodule in instantiations:
@@ -1272,26 +1283,26 @@ def calc_minimum_sizes():
         types[out_type] = max(types[in_type], types[out_type])
 
 
-def calc_type_abbrs():
-    types_names = list(types.keys())
+def calc_type_abbrs_rec(common_prefix, type_name_suffixes):
     first_char_dict = defaultdict(list)
-    for type_name in types_names:
-        first_char_dict[type_name[0]].append(type_name)
-    for first_char, type_list in first_char_dict.items():
-        if len(type_list) == 1:
-            type_abbrs[type_list[0]] = first_char.upper()
+    for type_name_suffix in type_name_suffixes:
+        if len(type_name_suffix) == 0:
+            first_char_dict[''].append(type_name_suffix)
         else:
-            second_char_dict = defaultdict(list)
-            for type_name in type_list:
-                if len(type_name) == 1:
-                    print('Please rename type {}. Initials conflict with other types.'.format(type_name))
-                    exit(-1)
-                second_char_dict[type_name[1]].append(type_name)
-            for second_char, second_type_list in second_char_dict.items():
-                if len(second_type_list) > 2:
-                    print('Types {} have the same initial. Please rename them.'.format(', '.join(second_type_list)))
-                    exit(-1)
-                type_abbrs[second_type_list[0]] = first_char.upper() + second_char.upper()
+            first_char_dict[type_name_suffix[0]].append(type_name_suffix)
+    for first_char, suffix_list in first_char_dict.items():
+        if len(suffix_list) == 1:
+            type_name = common_prefix + suffix_list[0]
+            type_abbr = (common_prefix + first_char).upper()
+            type_abbrs[type_name] = type_abbr
+        else:
+            assert first_char != '' and len(suffix_list) >= 2
+            suffix_without_first_char_list = [s[1:] for s in suffix_list]
+            calc_type_abbrs_rec(common_prefix + first_char, suffix_without_first_char_list)
+
+
+def calc_type_abbrs():
+    calc_type_abbrs_rec('', list(types.keys()))
 
 
 def handle_special_relations():
@@ -1404,10 +1415,10 @@ def enumerate_predicates():
             if idv_type in total_ordered_types:
                 # pass
                 for vars_name in vars_each_type[idv_type]:
-                    predicate_columns.append('{}=={}'.format(idv_name, vars_name))
+                    predicate_columns.append('{}[0]=={}'.format(idv_name, vars_name))
             else:
                 for vars_name in vars_each_type[idv_type]:
-                    predicate_columns.append('{}=={}'.format(idv_name, vars_name))
+                    predicate_columns.append('{}[0]=={}'.format(idv_name, vars_name))
 
 
 def build_forall_exists_functions():
@@ -1579,6 +1590,7 @@ def build_main_function():
     for relation_name, (idv_name, type_list) in module_relations.items():
         predicates_list_str = predicates_list_str.replace(relation_name, '{}.{}'.format(idv_name, relation_name))
     predicates_list_str = predicates_list_str.replace('==', '=')
+    predicates_list_str = predicates_list_str.replace('[0]', '')  # for individuals
     lines.append('{}df = pd.DataFrame(df_data, columns=[{}])'.format(indent_prefix, predicates_list_str))
     lines.append('{}df = df.drop_duplicates().astype(int)'.format(indent_prefix))
     lines.append('{}end_time = time.time()'.format(indent_prefix))

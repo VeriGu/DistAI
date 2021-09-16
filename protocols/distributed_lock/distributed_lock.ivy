@@ -48,14 +48,14 @@ relation locked(E:epoch, N:node)  # the node is the message source
 #
 ################################################################################
 individual first:node
-individual e:epoch
-axiom e ~= zero
-# axiom E ~= zero -> le(e, E)
+individual e1:epoch
+axiom e1 ~= zero
+# axiom E ~= zero -> le(e1, E)
 after init {
     # initially exactly one node holds the lock, and everyone has epoch zero
     held(X) := X=first;
     ep(N) := zero;
-    ep(first) := e;
+    ep(first) := e1;
     transfer(E, N) := false;
     locked(E, N) := false;
 }

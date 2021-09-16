@@ -116,11 +116,11 @@ def get_ring_initialization_block(element_type):
     element_size = '{}_num'.format(element_type)
     lines = ['# build ring topology',
              'btw = np.zeros(({}, {}, {}), dtype=bool)'.format(element_size, element_size, element_size),
-             'for x in range({}):'.format(element_size),
-             '\tfor y in range({}):'.format(element_size),
-             '\t\tfor z in range({}):'.format(element_size),
-             '\t\t\tif x != y and x != z and y != z:',
-             '\t\t\t\tbtw[x, y, z] = (x < y < z) | (z < x < y) | (y < z < x)']
+             'for xx in range({}):'.format(element_size),
+             '\tfor yy in range({}):'.format(element_size),
+             '\t\tfor zz in range({}):'.format(element_size),
+             '\t\t\tif xx != yy and xx != zz and yy != zz:',
+             '\t\t\t\tbtw[xx, yy, zz] = (xx < yy < zz) | (zz < xx < yy) | (yy < zz < xx)']
     return lines
 
 
@@ -131,7 +131,8 @@ def get_python_header():
             'import time', 'import pandas as pd',
             'from itertools import product, permutations',
             '',
-            'rng = np.random.default_rng(0)']
+            'rng = np.random.default_rng(0)',
+            'bool_num = 2']
 
 
 def get_select_and_execute_python_block():
