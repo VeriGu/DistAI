@@ -82,7 +82,7 @@ def tree_parse_ivy_expr(ivy_expr, parent_node):
         if_child = tree_parse_ivy_expr(if_splitted[0].strip(), this_node)
         else_splitted = if_splitted[1].split('else')
         assert len(else_splitted) == 2
-        branch_condition_child = tree_parse_ivy_expr(else_splitted[1].strip(), this_node)
+        branch_condition_child = tree_parse_ivy_expr(else_splitted[0].strip(), this_node)
         else_child = tree_parse_ivy_expr(else_splitted[1].strip(), this_node)
         this_node.children = [if_child, branch_condition_child, else_child]
         return this_node
