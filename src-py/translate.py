@@ -944,12 +944,7 @@ def parse_action(action_str, action_buffer):
                     # looking for ';' to close a statement
                     buffer_pending_semicolon += ' ' + line
             else:
-                if line.startswith('if'):
-                    branch_condition = line[len('if'):].strip()  # we assume the branch condition follows keyword "if" on the same line
-                    if_active, last_line_is_if = True, True
-                elif line.startswith('else'):
-                    else_active, last_line_is_else = True, True
-                elif if_active or else_active:
+                if if_active or else_active:
                     if line == '{':
                         brace_imbalance += 1
                     elif line == '}':
@@ -973,6 +968,11 @@ def parse_action(action_str, action_buffer):
                         branch_body_buffer = []
                     else:
                         branch_body_buffer.append(line)
+                elif line.startswith('if'):
+                    branch_condition = line[len('if'):].strip()  # we assume the branch condition follows keyword "if" on the same line
+                    if_active, last_line_is_if = True, True
+                elif line.startswith('else'):
+                    else_active, last_line_is_else = True, True
                 else:
                     # an action transition statement
                     if line[-1] == ';' or line_number == len(lines_in_action) - 1:  # last line in action can omit ';'
