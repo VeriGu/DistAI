@@ -6,6 +6,8 @@
 #include "Helper.h"
 #include "InvEncoder.h"
 
+#define MAX_CSV_COLUMN 60
+
 class Solver
 {
 private:

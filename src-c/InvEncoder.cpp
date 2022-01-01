@@ -65,6 +65,7 @@ void InvEncoder::encode_invs(const vars_t& vars, const vector<string>& predicate
 		vector<vector<string>> vars_grouped;
 
 		helper.reconstruct_var_group(vars, extended_same_type_groups, vars_grouped);
+		line += build_explicit_sorts_str(vars_grouped);
 
 		for (const vector<string>& group : vars_grouped)
 		{
@@ -105,6 +106,23 @@ void InvEncoder::encode_invs(const vars_t& vars, const vector<string>& predicate
 		line += curr_join;
 		str_invs.push_back(line);
 	}
+}
+
+string InvEncoder::build_explicit_sorts_str(const vector<vector<string>>& vars_grouped)
+{
+	string explicit_sorts_str = "forall ";
+	vector<string> segments;
+	for (const vector<string>& group : vars_grouped)
+	{
+		for (const string& var_name : group)
+		{
+			segments.push_back(var_name + ":" + config.var_to_type_map[var_name]);
+		}
+	}
+	string joined_string;
+	join_string(segments, ", ", joined_string);
+	explicit_sorts_str += joined_string + ". ";
+	return explicit_sorts_str;
 }
 
 void InvEncoder::append_invs_ivy(const string& infile, const string& outfile, const vector<string>& str_invs)

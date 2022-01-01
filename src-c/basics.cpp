@@ -75,7 +75,7 @@ void calc_combinations(const vector<T>& input_seq, int k, vector<vector<T>>& out
 	// TODO: this can be accelerated
 	assert(output_seq.size() == 0);
 	int n = input_seq.size();
-	assert(n > 0 && n >= k);
+	if (n == 0 || n < k) return;
 	assert(k <= MAX_COMB_K);
 	if (k == 0) return;
 	int output_len = binomialCoeff(n, k);

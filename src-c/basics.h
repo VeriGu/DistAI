@@ -34,8 +34,10 @@ struct Config
 	bool total_order_exists;
 	vector<string> total_order;
 	vector<vector<string>> same_type;
+	map<string, string> var_to_type_map;
 	bool hard;
 	vector<string> safety_properties;
+	vector<vector<string>> checked_inv_tuples;
 };
 
 struct DataMatrix

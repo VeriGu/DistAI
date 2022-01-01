@@ -8,6 +8,7 @@ class InvEncoder
 {
 	Helper helper;
 	void encode_invs(const vars_t& vars, const vector<string>& predicates, const unordered_set<inv_t, VectorHash>& invs, const vector<vector<string>>& extended_same_type_groups, vector<string>& str_invs, map<int, pair<vars_t, inv_t>>& id_to_inv, int start_idx = 100);
+	string build_explicit_sorts_str(const vector<vector<string>>& vars_grouped);
 public:
 	Config config;
 	void encode_invs_dict(const map<vars_t, unordered_set<inv_t, VectorHash>>& invs_dict, const map<vars_t, vector<string>>& predicates_dict, const vector<vector<string>>& extended_same_type_groups, vector<string>& str_invs, map<int, pair<vars_t, inv_t>>& id_to_inv, const vector<string>& more_invs);

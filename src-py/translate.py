@@ -44,6 +44,7 @@ action_trans = dict()  # key: action_name, value: a Python function in form of l
 action_prefixes = dict()  # key: action_name, value: a list of Python statements
 axioms = dict()  # key: axiom_type, value: relation/function involved
 invariants = []  # element: a string representing an invariant (safety property)
+candidates_to_check = dict()  # nested dict, key1: type_name, key2: relation arity, value: a list of pair (relation_name, index)
 axiom_default_relations = []  # element: relation_name involved in axioms handled by default
 python_codes = []  # each element is a line of Python code, will be written to .py file
 tmp_var_counter = [1]  # used to name temp variables
@@ -248,14 +249,10 @@ def build_initialization_block():
             lines.append('{}, {} = rng.choice({}_num, (2,1), replace=False)'.format(const1, const2, individuals[const1]))
     if 'qmembership' in axioms:
         for qmember_relation in axioms['qmembership']:
-            assert(len(relations[qmember_relation]) == 2)
+            assert (len(relations[qmember_relation]) == 2)
             mtype, qtype = relations[qmember_relation]
             lines.append('{} = np.zeros(({}_num, {}_num), dtype=bool)'.format(qmember_relation, mtype, qtype))
-            lines.append('for q in range({}_num):'.format(qtype))
-            lines.append('\tqsize = rng.integers(np.ceil({}_num/2), {}_num + 1)'.format(mtype, mtype))
-            lines.append('\ttmp_members = rng.choice(list(range({}_num)), qsize, replace=False)'.format(mtype))
-            lines.append('\tfor m in tmp_members:')
-            lines.append('\t\t{}[m,q] = True'.format(qmember_relation))
+            lines.extend(generate_qmembership_section(qmember_relation, mtype, qtype))
     if 'default' in axioms:
         for default_axiom in axioms['default']:
             lines.extend(default_axiom_rejection_sampling(default_axiom))
@@ -302,8 +299,9 @@ def find_implicit_forall_vars(tree_root):
     return list(implicit_forall_vars)
 
 
-def infer_qvars_type(tree_root, no_type_inference_needed_qvars):
+def infer_qvars_type(tree_root, no_type_inference_needed_qvars, call_from_parse_inv=False):
     tree_nodes = all_nodes_of_tree(tree_root)
+    infered_qvar_type_inverse_dict = defaultdict(list)
     for tree_node in tree_nodes:
         if tree_node.node_type == 'qvar':
             qvar_name = tree_node.substr
@@ -321,6 +319,7 @@ def infer_qvars_type(tree_root, no_type_inference_needed_qvars):
                         qvar_type = functions[predicate_or_function_name][0][qvar_index]
                     elif predicate_or_function_name in order_relations:
                         qvar_type = order_relations[predicate_or_function_name][qvar_index]
+                    infered_qvar_type_inverse_dict[qvar_type].append(qvar_name)
                 else:
                     individual_name, relation_name = parent_node.metadata
                     assert relation_name in module_relations and individual_name == module_relations[relation_name][0]
@@ -337,7 +336,8 @@ def infer_qvars_type(tree_root, no_type_inference_needed_qvars):
                             # the qvar type has been specified in Ivy or inferred by another relation
                             assert node_pointer.metadata[qvar_name] == qvar_type
                         break
-                assert qvar_type_confirmed or qvar_name in no_type_inference_needed_qvars
+                assert qvar_type_confirmed or qvar_name in no_type_inference_needed_qvars or call_from_parse_inv
+    return infered_qvar_type_inverse_dict
 
 
 def ivy_expr_to_python_expr_rec(tree_root):
@@ -1114,11 +1114,32 @@ def parse_ivy_file(ivy_file):
     with open(ivy_file) as infile:
         lines = infile.readlines()
 
-    in_after_init, in_action, in_module, in_invariant = False, False, False, False
+    # first pass of Ivy file, only extract invariants (safety property)
+    in_invariant = False
+    invariant_buffer = []
+    for line_num, line in enumerate(lines):
+        # remove comment suffix
+        line = line.split('#')[0].strip()
+        if line == '':  # empty line
+            pass
+        if in_invariant:
+            if line.startswith('invariant'):
+                parse_invariant(invariant_buffer)
+                invariant_buffer.clear()
+                invariant_buffer.append(line[len('invariant') + 1:].strip())
+            else:
+                invariant_buffer.append(line)
+        elif line.startswith('invariant'):
+            in_invariant = True
+            invariant_buffer.append(line[len('invariant') + 1:].strip())
+    if len(invariant_buffer) > 0:
+        parse_invariant(invariant_buffer)
+
+    # second pass of Ivy file, extract everything other than invariants
+    in_after_init, in_action, in_module = False, False, False
     action_str, action_buffer = '', []
     module_str = ''
     brace_imbalance = 0
-    invariant_buffer = []
     for line_num, line in enumerate(lines):
         # remove comment suffix
         line = line.split('#')[0].strip()
@@ -1147,15 +1168,6 @@ def parse_ivy_file(ivy_file):
             brace_imbalance += line.count('{') - line.count('}')
             if line == '}' and brace_imbalance == 0:
                 in_module = False
-
-        elif in_invariant:
-            if line.startswith('invariant'):
-                parse_invariant(invariant_buffer)
-                invariant_buffer.clear()
-                invariant_buffer.append(line[len('invariant') + 1:].strip())
-            else:
-                invariant_buffer.append(line)
-
 
         else:              # in global scope
             if line_num == 0:
@@ -1188,11 +1200,12 @@ def parse_ivy_file(ivy_file):
                 if words != ['after', 'init', '{']:
                     print('Line {} invalid. Maybe it should be "after init {{" ?'.format(line))
                     exit(-1)
+                in_after_init = True
                 calc_minimum_sizes()
                 calc_type_abbrs()
+                calc_candidates_to_check()
                 merge_axioms()
                 handle_special_relations()
-                in_after_init = True
 
             elif line.startswith('action'):
                 action_str = line[len('action')+1:].strip()
@@ -1215,15 +1228,11 @@ def parse_ivy_file(ivy_file):
                 pass
 
             elif line.startswith('invariant'):
-                in_invariant = True
-                invariant_buffer.append(line[len('invariant')+1:].strip())
+                break
 
             else:
                 print('Unparsable line: {}'.format(line))
                 exit(-1)
-
-    if len(invariant_buffer) > 0:
-        parse_invariant(invariant_buffer)
 
 
 def add_blank_line():
@@ -1246,14 +1255,10 @@ def calc_minimum_sizes():
         occurrences = Counter(type_names)
         for type_name, count in occurrences.items():
             types[type_name] = max(types[type_name], count)
-    # some types have heuristic rules, you can modify or add your own rules
+    # some types have heuristic rules, you can modify or add your own rules, or manually specify the minimum size for certain types
     if 'node' in types and 'node' not in user_specified_min_size:
-        if 'quorum' in types and 'round' not in types:
-            # at least 3 nodes needed to distinguish majority from minority
-            types['node'] = max(types['node'], 3)
-        else:
-            # at least 2 nodes for a network
-            types['node'] = max(types['node'], 2)
+        # at least 2 nodes for a network
+        types['node'] = max(types['node'], 2)
     if 'key' in types and 'value' in types:
         types['value'] = max(types['value'], 2)
     if 'nequal' in axioms:
@@ -1267,15 +1272,29 @@ def calc_minimum_sizes():
         for stype, idv_name in instantiations[smodule]:
             types[stype] = max(types[stype], 3)
     # when the initial size fails (refinement fails), increase template size
+    # tie-breaking rule: prioritized types, i.e., types of which more variables appear in a safety property than our template size
+    safety_num_vars_each_type = defaultdict(int)
+    subtree_roots = []
+    for inv_str in invariants:
+        subtree_roots.append(tree_parse_ivy_expr(inv_str, None))
+    for subtree_root in subtree_roots:
+        qvars_each_type = infer_qvars_type(subtree_root, [], call_from_parse_inv=True)
+        for type_name, qvars in qvars_each_type.items():
+            safety_num_vars_each_type[type_name] = max(safety_num_vars_each_type[type_name], len(qvars))
+    tie_breaking_score = defaultdict(int)
+    for type_name in types:
+        if safety_num_vars_each_type[type_name] > types[type_name]:
+            tie_breaking_score[type_name] = safety_num_vars_each_type[type_name] - types[type_name]
     while num_attempt[0] > 0:
         types_copy = types.copy()
-        for type_name in sorted(types_copy, key=lambda x: types_copy[x]):
+        for type_name in sorted(types_copy, key=lambda x: 10*types_copy[x] - tie_breaking_score[x]):
             minimum_size = types[type_name]
             if num_attempt[0] == 0:
                 finished = True
                 break
             num_attempt[0] -= 1
             types[type_name] = minimum_size + 1
+            tie_breaking_score[type_name] = max(tie_breaking_score[type_name] - 1, 0)
     # one-to-one mapped types must have same size
     if 'one-to-one-f' in axioms:
         func_name, in_type, out_type = get_one_to_one()
@@ -1303,6 +1322,20 @@ def calc_type_abbrs_rec(common_prefix, type_name_suffixes):
 
 def calc_type_abbrs():
     calc_type_abbrs_rec('', list(types.keys()))
+
+
+def calc_candidates_to_check():
+    for relation_name, relation_signature in relations.items():
+        if relation_name == 'le':
+            continue
+        first_type = relation_signature[0]
+        if relation_signature.count(first_type) == len(relation_signature) == types[first_type] == 2:
+            if first_type not in candidates_to_check:
+                candidates_to_check[first_type] = dict()
+            if len(relation_signature) not in candidates_to_check[first_type]:
+                candidates_to_check[first_type][len(relation_signature)] = []
+            for i in range(len(relation_signature)):
+                candidates_to_check[first_type][len(relation_signature)].append((relation_name, i))
 
 
 def handle_special_relations():
@@ -1372,8 +1405,16 @@ def enumerate_predicates():
         if len(safety_relations) > 0 and relation_name not in safety_relations:
             continue
         vars_list_list = []
-        for type_name in relation_signature:
-            vars_list_list.append(vars_each_type[type_name])
+        if len(relation_signature) >= 4 and relation_signature.count(relation_signature[0]) == len(relation_signature):
+            print('Warning! Relation {} has arity {}. DistAI has a known limitation dealing with high-arity relations of one type. '
+                  'Additional heuristics are applied to reduce the search space, but there is still a decent chance of timeout.'.format(relation_name, len(relation_signature)))
+            vars_list_list.append([vars_each_type[relation_signature[0]][0]])
+            vars_list_list.append(vars_each_type[relation_signature[1]][:2])
+            for i in range(2, len(relation_signature)):
+                vars_list_list.append(vars_each_type[relation_signature[i]])
+        else:
+            for type_name in relation_signature:
+                vars_list_list.append(vars_each_type[type_name])
         params_list = product(*vars_list_list)
         for params in params_list:
             predicate_columns.append('{}[{}]'.format(relation_name, ','.join(params)))
@@ -1471,12 +1512,56 @@ def build_instance_generator():
     return lines
 
 
+def build_add_checked_candidates():
+    candidates_to_check_count = sum([sum([len(candidates_to_check_one_type_arity) for candidates_to_check_one_type_arity in candidates_to_check_one_type.values()]) for candidates_to_check_one_type in candidates_to_check.values()])
+    lines = ['def add_checked_candidates({}):'.format(', '.join(['candidate{}'.format(i) for i in range(candidates_to_check_count)]))]
+    if candidates_to_check_count == 0:
+        lines.append('\treturn')
+        return lines
+    lines.append("\twith open(\'../configs/{}.txt\', \'a\') as config_file:".format(PROBLEM))
+    candidate_count = 0
+    for type_name, candidates_to_check_one_type in candidates_to_check.items():
+        for relation_arity, candidates_to_check_one_type_arity in candidates_to_check_one_type.items():
+            for relation_name, index in candidates_to_check_one_type_arity:
+                lines.append('\t\tif candidate{}:'.format(candidate_count))
+                lines.append("\t\t\tconfig_file.write('checked-inv: {}, {}, {}, {}, {}\\n')".format(relation_name, relation_arity, index, type_name, type_abbrs[type_name]))
+                candidate_count += 1
+    return lines
+
+
 def get_one_to_one():
     func_name, in_type, out_type = '', '', ''
     if 'one-to-one-f' in axioms:
         func_name = axioms['one-to-one-f']
         in_type, out_type = functions[func_name][0][0], functions[func_name][1]
     return func_name, in_type, out_type
+
+
+def get_check_candidates_block():
+    lines = []
+    if len(candidates_to_check) > 0:
+        lines.extend(['# check some candidate invariants', 'if rng.random() < .2:'])
+    candidate_count = 0
+    for type_name, candidates_to_check_one_type in candidates_to_check.items():
+        type_abbr = type_abbrs[type_name]
+        for relation_arity, candidates_to_check_one_type_arity in candidates_to_check_one_type.items():
+            indent_prefix = '\t'
+            for i in range(relation_arity + 1):
+                lines.append('{}for {}{} in range({}_num):'.format(indent_prefix, type_abbr, i, type_name))
+                indent_prefix += '\t'
+            for relation_name, index in candidates_to_check_one_type_arity:
+                lines.append('{}if candidate{}:'.format(indent_prefix, candidate_count))
+                indent_prefix += '\t'
+                relation_params = list(range(relation_arity))
+                var_list1 = ['{}{}'.format(type_abbr, i) for i in relation_params]
+                relation_params[index] = relation_arity
+                var_list2 = ['{}{}'.format(type_abbr, i) for i in relation_params]
+                lines.append('{}if {}{} != {}{} and {}[{}] and {}[{}]:'.format(indent_prefix, type_abbr, index, type_abbr, relation_arity, relation_name, ', '.join(var_list1), relation_name, ', '.join(var_list2)))
+                indent_prefix += '\t'
+                lines.append('{}candidate{} = False'.format(indent_prefix, candidate_count))
+                candidate_count += 1
+                indent_prefix = indent_prefix[:-2]
+    return lines
 
 
 def build_sample_function():
@@ -1497,6 +1582,9 @@ def build_sample_function():
     partial_function_names = ['{}_f'.format(s) for s in axioms['partial-func'].keys()] if 'partial-func' in axioms else []
     module_relation_names = list(module_relations.keys())
     lines.append('{}global {}'.format(indent_prefix, ', '.join(type_numbers + relation_names + individual_names + function_names + partial_function_names + module_relation_names)))
+    candidates_to_check_count = sum([sum([len(candidates_to_check_one_type_arity) for candidates_to_check_one_type_arity in candidates_to_check_one_type.values()]) for candidates_to_check_one_type in candidates_to_check.values()])
+    if candidates_to_check_count > 0:
+        lines.append('{}{} = {}'.format(indent_prefix, ', '.join(['candidate{}'.format(i) for i in range(candidates_to_check_count)]), ', '.join(['True' for _ in range(candidates_to_check_count)])))
     lines.append('{}df_data = set()'.format(indent_prefix))
     lines.append('{}stopping_criteria = False'.format(indent_prefix))
     lines.append('{}simulation_round = 0'.format(indent_prefix))
@@ -1524,13 +1612,10 @@ def build_sample_function():
         lines.append("{}{}argument_pool['{}'].append(({}))".format(indent_prefix, tmp_indent, action_name,
                                                                    params_tuple))
     lines.append('')
-    lines.append('{}for curr_iter in range(max_iter):'.format(indent_prefix))
+
+    indent_prefix = '\t\t'
+    lines.append('{}def collect_subsamples():'.format(indent_prefix))
     indent_prefix += '\t'
-    select_and_execute_block = get_select_and_execute_python_block()
-    lines.extend([(indent_prefix + s) for s in select_and_execute_block])
-    if EXACT_NUM_OF_SAMPLE[0] > 0:
-        lines.append('{}exact_sample_number += 1'.format(indent_prefix))
-    lines.append('')
     lines.append('{}# generate subsamples from the current state (sample)'.format(indent_prefix))
     lines.append('{}for k in range({}):'.format(indent_prefix, SUBSAMPLE_PER_SAMPLE))
     indent_prefix += '\t'
@@ -1550,7 +1635,8 @@ def build_sample_function():
             # e.g., node -> id
             lines.append('{}{} = {}_indices'.format(indent_prefix, lvalue, type_name))
             lvalue = ', '.join(vars_each_type[one_to_one_out_type]) + ','
-            rvalue = ', '.join(['{}[{}]'.format(one_to_one_f, in_var_name) for in_var_name in vars_each_type[one_to_one_in_type]]) + ','
+            rvalue = ', '.join(['{}[{}]'.format(one_to_one_f, in_var_name) for in_var_name in
+                                vars_each_type[one_to_one_in_type]]) + ','
             lines.append('{}{} = {}'.format(indent_prefix, lvalue, rvalue))
             one_to_one_pairs = list(zip(vars_each_type[one_to_one_in_type], vars_each_type[one_to_one_out_type]))
             one_to_one_pairs_str = ', '.join(['({}, {})'.format(var1, var2) for var1, var2 in one_to_one_pairs])
@@ -1562,11 +1648,26 @@ def build_sample_function():
             indent_prefix += '\t'
             if type_name == one_to_one_in_type:
                 lvalue = ', '.join(vars_each_type[one_to_one_out_type]) + ','
-                rvalue = ', '.join(['{}[{}]'.format(one_to_one_f, in_var_name) for in_var_name in vars_each_type[one_to_one_in_type]]) + ','
+                rvalue = ', '.join(['{}[{}]'.format(one_to_one_f, in_var_name) for in_var_name in
+                                    vars_each_type[one_to_one_in_type]]) + ','
                 lines.append('{}{} = {}'.format(indent_prefix, lvalue, rvalue))
     predicates_str = ', '.join(predicate_columns)
     predicates_str = translate_remove_le(predicates_str)
     lines.append('{}df_data.add(({}))'.format(indent_prefix, predicates_str))
+    lines.append('')
+
+    indent_prefix = '\t\t'
+    lines.append('{}collect_subsamples()'.format(indent_prefix))
+    lines.append('{}for curr_iter in range(max_iter):'.format(indent_prefix))
+    indent_prefix += '\t'
+    check_candidates_block = get_check_candidates_block()
+    select_and_execute_block = get_select_and_execute_python_block()
+    lines.extend([(indent_prefix + s) for s in check_candidates_block + select_and_execute_block])
+    if EXACT_NUM_OF_SAMPLE[0] > 0:
+        lines.append('{}exact_sample_number += 1'.format(indent_prefix))
+    lines.append('{}collect_subsamples()'.format(indent_prefix))
+    lines.append('')
+
     indent_prefix = '\t\t'
     lines.append('{}simulation_round += 1'.format(indent_prefix))
     lines.append('{}df_size_history.append(len(df_data))'.format(indent_prefix))
@@ -1574,6 +1675,7 @@ def build_sample_function():
         lines.append('{}stopping_criteria = exact_sample_number > {}'.format(indent_prefix, EXACT_NUM_OF_SAMPLE[0]))
     else:
         lines.append('{}stopping_criteria = simulation_round > {} or (simulation_round > {} and df_size_history[-1] == df_size_history[-{}])'.format(indent_prefix, max_simulation_round, max_no_progress_simulation_round, max_no_progress_simulation_round + 1))
+    lines.append('\tadd_checked_candidates({})'.format(', '.join(['candidate{}'.format(i) for i in range(candidates_to_check_count)])))
     lines.append('\treturn list(df_data)')
     return lines
 
@@ -1612,6 +1714,8 @@ def write_python_file(python_file):
     add_blank_line()
     python_codes.extend(build_instance_generator())
     add_blank_line()
+    python_codes.extend(build_add_checked_candidates())
+    add_blank_line()
     python_codes.extend(build_sample_function())
     add_blank_line()
     python_codes.extend(build_main_function())
@@ -1627,21 +1731,20 @@ def emit_config_file(config_file):
     total_order = []
     one_to_one_f, one_to_one_in_type, one_to_one_out_type = get_one_to_one()
     for type_name, vars_list in vars_each_type.items():
-        if len(vars_list) >= 2:
-            if type_name in total_ordered_types:
-                total_order.append(vars_list)
-            else:
-                if type_name == one_to_one_in_type or (type_name == one_to_one_out_type and one_to_one_in_type in total_ordered_types):
-                    # we do not need both N1,N2,N3 and ID1,ID2,ID3
-                    continue
-                same_type.append(vars_list)
+        if type_name in total_ordered_types:
+            total_order.append((type_name, vars_list))
+        else:
+            if type_name == one_to_one_in_type or (type_name == one_to_one_out_type and one_to_one_in_type in total_ordered_types):
+                # we do not need both N1,N2,N3 and ID1,ID2,ID3
+                continue
+            same_type.append((type_name, vars_list))
     assert(len(total_order) <= 1)
     if len(total_order) == 1:
-        config_codes.append('total-order: {}'.format(', '.join(total_order[0])))
+        config_codes.append('total-order: {}: {}'.format(total_order[0][0], ', '.join(total_order[0][1])))
     if len(same_type) > 0:
         same_type_str_list = []
-        for vars_list in same_type:
-            same_type_str_list.append(', '.join(vars_list))
+        for type_name, vars_list in same_type:
+            same_type_str_list.append('{}: {}'.format(type_name, ', '.join(vars_list)))
         config_codes.append('same-type: {}'.format('; '.join(same_type_str_list)))
     if 'one-to-one-f' in axioms:
         func_name, in_type, out_type = get_one_to_one()

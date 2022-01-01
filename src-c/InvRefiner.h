@@ -24,10 +24,11 @@ private:
 	void refine_one_countereg(const vars_t& vars, const inv_t& inv);
 	void extend_disjunctions(const vars_t& vars, const inv_t& inv);
 	void extend_successors(const vars_t& vars, const inv_t& inv);
+	void add_checked_invs(vector<string>& more_invs);
 	void infer_more_invs(vector<string>& more_invs);
 public:
 	bool is_last_attempt;
-	InvRefiner(string problem, int num_attempt) : Solver(problem, num_attempt), refine_extend_disjunction(false), refine_extend_successor(false), lower_literal_inv_discarded(false), lower_subtemplate_inv_discarded(false), ivy_call_count(0), countereg_count(0), is_last_attempt(false) {}
+	InvRefiner(string problem, int num_attempt) : Solver(problem, num_attempt), refine_extend_disjunction(false), refine_extend_successor(false), lower_literal_inv_discarded(false), lower_subtemplate_inv_discarded(false), ivy_call_count(0), countereg_count(0), id_to_inv(), is_last_attempt(false) {}
 	bool auto_refine(bool add_disj, bool add_proj);
 	int get_countereg_count();
 	int get_invariant_count();

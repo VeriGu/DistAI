@@ -7,6 +7,7 @@ void InvRefiner::ivy_check_curr_invs()
 	id_to_inv.clear();
 	vector<string> more_invs;
 	if (config.hard) infer_more_invs(more_invs);
+	add_checked_invs(more_invs);
 	encode_and_output(original_ivy_file, target_output_file, id_to_inv, more_invs);
 	int retval = system((string(IVY_CHECK_PATH) + " " + target_output_file + " > runtime/" + problem_name + "/ivy_check_log.txt").c_str());
 	(void)retval;
@@ -135,6 +136,35 @@ void InvRefiner::extend_successors(const vars_t& vars, const inv_t& inv)
 		inv_as_set.insert(inv);
 		helper.generalize_invs(inv_as_set, column_indices_list, new_extended_invs);
 		invs_dict[successor].insert(new_extended_invs.begin(), new_extended_invs.end());
+	}
+}
+
+void InvRefiner::add_checked_invs(vector<string>& more_invs)
+{
+	for (const vector<string> checked_inv_tuple : config.checked_inv_tuples)
+	{
+		const string& relation_name = checked_inv_tuple[0];
+		int arity = std::stoi(checked_inv_tuple[1]);
+		int index = std::stoi(checked_inv_tuple[2]) + 1;
+		const string& type_name = checked_inv_tuple[3];
+		const string& type_abbr = checked_inv_tuple[4];
+		string line;
+		vector<string> segments;
+		for (int i = 1; i <= arity + 1; i++) segments.push_back(type_abbr + std::to_string(i) + ":" + type_name);
+		join_string(segments, ", ", line);
+		line = "forall " + line + ". ";
+		string inequality = type_abbr + std::to_string(index) + " ~= " + type_abbr + std::to_string(arity + 1);
+		vector<string> param_range;
+		for (int i = 1; i <= arity; i++) param_range.push_back(type_abbr + std::to_string(i));
+		string predicate1;
+		join_string(param_range, ',', predicate1);
+		predicate1 = "~" + relation_name + "(" + predicate1 + ")";
+		param_range[index - 1] = type_abbr + std::to_string(arity + 1);
+		string predicate2;
+		join_string(param_range, ',', predicate2);
+		predicate2 = "~" + relation_name + "(" + predicate2 + ")";
+		line += inequality + " -> " + predicate1 + " | " + predicate2;
+		more_invs.push_back(line);
 	}
 }
 

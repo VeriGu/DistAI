@@ -1,5 +1,5 @@
 CC = g++
-CFLAGS = -Wall -O2 -std=c++14
+CFLAGS = -Wall -O2 -std=c++17
 
 default: main
 

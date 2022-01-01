@@ -31,15 +31,19 @@ def translate_remove_le(ivy_expr):
     while match is not None:
         right_parenthesis_idx = find_closing_parenthesis(curr_expr, match.end() - 1)
         comma_idx = -1
-        count = 0
+        parenthesis_count, bracket_count = 0, 0
         for i in range(match.end(), len(curr_expr)):
-            if curr_expr[i] == ',' and count == 0:
+            if curr_expr[i] == ',' and parenthesis_count == 0 and bracket_count == 0:
                 comma_idx = i
                 break
             if curr_expr[i] == '(':
-                count += 1
+                parenthesis_count += 1
             elif curr_expr[i] == ')':
-                count -= 1
+                parenthesis_count -= 1
+            elif curr_expr[i] == '[':
+                bracket_count += 1
+            elif curr_expr[i] == ']':
+                bracket_count -= 1
         assert(match.end() < comma_idx < len(curr_expr) - 1)
         match_start = match.start() if match.group(0) == 'le(' else match.start() + 1  # handle start-of-string ^
         curr_expr = '{}({} <= {}){}'.format(curr_expr[:match_start], curr_expr[match.end(): comma_idx],
@@ -129,7 +133,7 @@ def get_python_header():
             'from collections import defaultdict',
             'from scipy.special import comb',
             'import time', 'import pandas as pd',
-            'from itertools import product, permutations',
+            'from itertools import product, permutations, combinations',
             '',
             'rng = np.random.default_rng(0)',
             'bool_num = 2']
@@ -151,4 +155,33 @@ def get_select_and_execute_python_block():
              '\t# action pool exhausted, start a new simulation',
              '\tbreak',
              'func_from_name[action_selected](*args_selected)']
+    return lines
+
+def generate_qmembership_section(relation_name, mtype, qtype):
+    lines = ['for q in range({}_num):'.format(qtype),
+             '\tqsize = rng.integers(1, {}_num + 1)'.format(mtype),
+             '\tqsize_succeed = False',
+             '\t# choose a random size for this quorum, increment if infeasible, when size == node_num it must be feasible',
+             '\twhile not qsize_succeed:',
+             '\t\tnode_combs_this_qsize = list(combinations(list(range({}_num)), qsize))'.format(mtype),
+             '\t\trng.shuffle(node_combs_this_qsize)',
+             '\t\tfor node_comb in node_combs_this_qsize:',
+             '\t\t\t# check if this quorum is compatible (i.e., shares one element in common) with previous quorums',
+             '\t\t\tis_valid_node_comb = True',
+             '\t\t\tfor existing_q in range(0, q):',
+             '\t\t\t\tthis_existing_q_has_common_element = False',
+             '\t\t\t\tfor node in node_comb:',
+             '\t\t\t\t\tif {}[node, existing_q]:'.format(relation_name),
+             '\t\t\t\t\t\tthis_existing_q_has_common_element = True',
+             '\t\t\t\t\t\tbreak',
+             '\t\t\t\tif not this_existing_q_has_common_element:',
+             '\t\t\t\t\tis_valid_node_comb = False',
+             '\t\t\t\t\tbreak',
+             '\t\t\tif is_valid_node_comb:',
+             '\t\t\t\tqsize_succeed = True',
+             '\t\t\t\tfor node in node_comb:',
+             '\t\t\t\t\t{}[node, q] = True'.format(relation_name),
+             '\t\t\t\tbreak',
+             '\t\tqsize += 1',
+             'rng.shuffle({}, axis=1)'.format(relation_name)]
     return lines

@@ -20,7 +20,7 @@ void read_config(const string& config_file, Config* config)
 			assert(config->one_to_one.size() == 0);
 			assert(config->one_to_one_bidir.size() == 0);
 			vector<vector<string>> pairs;
-			semicolon_comma_parse_line(line.substr(11), pairs);
+			two_delimeters_parse_line(line.substr(11), ';', ',', pairs);
 			for (vector<string>& curr_pair : pairs)
 			{
 				assert(curr_pair.size() == 2);
@@ -38,11 +38,15 @@ void read_config(const string& config_file, Config* config)
 		else if (line.rfind("total-order:", 0) == 0)
 		{
 			assert(config->total_order.size() == 0);
-			vector<string> literals;
-			split_string(line.substr(12), ',', literals);
-			if (literals.size() > 0)
+			vector<string> colon_splitted;
+			split_string(line.substr(12), ':', colon_splitted);
+			string type_name = colon_splitted[0];
+			vector<string> variables;
+			split_string(colon_splitted[1], ',', variables);
+			if (variables.size() > 0)
 			{
-				config->total_order = literals;
+				config->total_order = variables;
+				for (const string& var_name : variables) config->var_to_type_map[var_name] = type_name;
 				config->total_order_exists = true;
 			}
 		}
@@ -50,8 +54,16 @@ void read_config(const string& config_file, Config* config)
 		{
 			assert(config->same_type.size() == 0);
 			vector<vector<string>> groups;
-			semicolon_comma_parse_line(line.substr(10), groups);
-			config->same_type = groups;
+			two_delimeters_parse_line(line.substr(10), ';', ':', groups);
+			for (const vector<string>& group : groups)
+			{
+				assert(group.size() == 2);
+				const string& type_name = group[0];
+				vector<string> variables;
+				split_string(group[1], ',', variables);
+				config->same_type.push_back(variables);
+				for (const string& var_name : variables) config->var_to_type_map[var_name] = type_name;
+			}
 		}
 		else if (line.rfind("max-literal:", 0) == 0)
 		{
@@ -69,6 +81,13 @@ void read_config(const string& config_file, Config* config)
 			{
 				config->safety_properties.push_back(line.substr(16));
 			}
+		}
+		else if (line.rfind("checked-inv:", 0) == 0)
+		{
+			vector<string> checked_inv_tuple;
+			split_string(line.substr(12), ',', checked_inv_tuple);
+			assert(checked_inv_tuple.size() == 5);
+			config->checked_inv_tuples.push_back(checked_inv_tuple);
 		}
 		else
 		{
@@ -172,14 +191,14 @@ void add_negation(DataMatrix& data_mat)
 	// warning: currently no memory free (delete []) for old_data_ptr
 }
 
-void semicolon_comma_parse_line(const string& line, vector<vector<string>>& parsed_results)
+void two_delimeters_parse_line(const string& line, char top_delimeter, char secondary_delimeter, vector<vector<string>>& parsed_results)
 {
 	vector<string> segments;
-	split_string(line, ';', segments);
+	split_string(line, top_delimeter, segments);
 	for (string segment : segments)
 	{
 		vector<string> segment_parsed_result;
-		split_string(segment, ',', segment_parsed_result);
+		split_string(segment, secondary_delimeter, segment_parsed_result);
 		if (segment_parsed_result.size() > 0)
 		{
 			parsed_results.push_back(segment_parsed_result);

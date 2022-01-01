@@ -1,6 +1,6 @@
 #include "Solver.h"
 
-Solver::Solver(string problem, int num_attempt)
+Solver::Solver(string problem, int num_attempt) : data_mat_dict(), self_mapped_new_predicates_dict(), predicates_dict(), column_indices_dict(), var_in_p_dict(), p_to_idx_dict(), invs_dict(), extended_invs_dict()
 {
 	problem_name = problem;
 	string csv_file = "../traces/" + problem + ".csv";
@@ -13,6 +13,11 @@ Solver::Solver(string problem, int num_attempt)
 	helper.config = config;
 	encoder.config = config;
 	read_trace(csv_file, full_predicates, init_data_mat);
+	if (init_data_mat.ncol > MAX_CSV_COLUMN)
+	{
+		cout << "There are too many predicates (" << init_data_mat.ncol << ") that can appear in the invariants. Bounding initial max-literal to <=2." << endl;
+		helper.config.max_literal = encoder.config.max_literal = config.max_literal = std::min(config.max_literal, 2);
+	}
 	add_negation(init_data_mat);
 	extended_same_type_groups = config.same_type;
 	if (config.total_order_exists)
@@ -118,10 +123,18 @@ void Solver::get_column_indices_dict()
 					vector<string> remapped_predicates;
 					helper.remap_predicates(predicates, vars_map, remapped_predicates);
 					vector<int> column_indices;
+					bool all_remapped_predicates_exists = true;
 					for (const string& p : remapped_predicates)
 					{
-						column_indices.push_back(p_to_idx_dict[super_vars][p]);
+						if (p_to_idx_dict[super_vars].find(p) == p_to_idx_dict[super_vars].end())
+						{
+							// it is theoretically possible that in the csv file, there is p(X1,X1), p(X1,X2) but no p(X2,X2), then when we remap p(X1,X1) with X1->X2, we get a non-existent p(X2,X2)
+							all_remapped_predicates_exists = false;
+							break;
+						}
+						column_indices.push_back(p_to_idx_dict[super_vars].at(p));
 					}
+					if (!all_remapped_predicates_exists) continue;
 					int column_indices_half_count = column_indices.size();
 					for (int i = 0; i < column_indices_half_count; i++)
 					{
@@ -216,10 +229,18 @@ void Solver::reduce_table(vector<string>& old_predicates, DataMatrix& old_data_m
 		vector<string> remapped_predicates;
 		helper.remap_predicates(new_predicates, vars_map, remapped_predicates);
 		vector<int> column_indices;
+		bool all_remapped_predicates_exists = true;
 		for (const string& p : remapped_predicates)
 		{
-			column_indices.push_back(p_to_idx[p]);
+			if (p_to_idx.find(p) == p_to_idx.end())
+			{
+				// it is theoretically possible that in the csv file, there is p(X1,X1), p(X1,X2) but no p(X2,X2), then when we remap p(X1,X1) with X1->X2, we get a non-existent p(X2,X2)
+				all_remapped_predicates_exists = false;
+				break;
+			}
+			column_indices.push_back(p_to_idx.at(p));
 		}
+		if (!all_remapped_predicates_exists) continue;
 		int column_indices_half_count = column_indices.size();
 		for (int i=0; i<column_indices_half_count; i++)
 		{

@@ -50,6 +50,7 @@ def find_closing_parenthesis(target_str, start_idx):
 
 
 def split_string_with_parenthesis_by_delimeter(in_str, delimeter):
+    # if in_str = 'p$(q$r)', delieteter = '$', then output_parts = ['p', '(q$r)']
     parts = in_str.split(delimeter)
     lp_net_total = 0
     buffered_parts = []
@@ -63,6 +64,27 @@ def split_string_with_parenthesis_by_delimeter(in_str, delimeter):
             buffered_parts.clear()
     assert lp_net_total == 0
     return output_parts
+
+def add_disambiguating_forallexists_parenthesis(in_str):
+    settled = ''
+    while len(in_str) > 0:
+        match_obj = re.search('(forall)|(exists)', in_str)
+        if match_obj is None:
+            settled += in_str
+            break
+        else:
+            prefix = in_str[: match_obj.start(0)]
+            count = 0
+            for i in range(match_obj.end(0), len(in_str)):
+                if in_str[i] == '(':
+                    count += 1
+                elif in_str[i] == ')':
+                    count -= 1
+                if count == -1 or i == len(in_str) - 1:
+                    settled += prefix + '(' + in_str[match_obj.start(0): i+1] + ')'
+                    in_str = in_str[i+1:]
+                    break
+    return settled
 
 
 def parse_comma_params_and_add_children(this_node, params_str):
@@ -106,6 +128,10 @@ def tree_parse_ivy_expr(ivy_expr, parent_node):
         this_node.children = [tree_parse_ivy_expr(formula.strip(), this_node)]
         return this_node
     # now the top-level is bound to be a logical formula
+    # we should mask the atomic substrings that we should not break into at this level, either from parenthesis or from forall/exists
+    # in p(X) & (q(X) | r(X)), (q(X) | r(X)) should be considered atomic, handled in function split_string_with_parenthesis_by_delimeter
+    # in p(X) & forall Y. q(X,Y) & r(Y), forall Y. q(X,Y) & r(Y) should be considered an atomic substring, handled in function add_disambiguating_forallexists_parenthesis
+    ivy_expr = add_disambiguating_forallexists_parenthesis(ivy_expr)
     equiv_splitted = split_string_with_parenthesis_by_delimeter(ivy_expr, '<->')
     if len(equiv_splitted) >= 2:
         assert len(equiv_splitted) == 2
